@@ -1,0 +1,126 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# Dependency and tool caches
+.tox/
+.nox/
+.hypothesis/
+.ipynb_checkpoints/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+secrets.json
+config.local.json
+*.local.json
+*.secret.json
+
+# OpenAlpha local runtime data
+.openalpha/
+openalpha.db
+openalpha.db-*
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+local_data/
+data/local/
+reports/generated/
+reports/local/
+exports/
+
+# Local coding-agent instructions
+agent.md
+
+# Logs and process files
+logs/
+*.log
+*.pid
+*.seed
+
+# Node / frontend dependencies and builds
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+out/
+.nuxt/
+.svelte-kit/
+coverage/
+vite.config.*.timestamp-*
+vite.config.*.mjs
+
+# Frontend generated assets
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# Package manager local state
+.yarn/*
+!.yarn/patches/
+!.yarn/plugins/
+!.yarn/releases/
+!.yarn/sdks/
+!.yarn/versions/
+
+# Docker and local overrides
+docker-compose.override.yml
+compose.override.yml
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Test, coverage, and report outputs
+junit.xml
+test-results/
+playwright-report/
+blob-report/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.cache/
+
+
+.agents.md
