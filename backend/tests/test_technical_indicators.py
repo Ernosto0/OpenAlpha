@@ -28,7 +28,7 @@ def _bar(
     close: float,
     high: float | None = None,
     low: float | None = None,
-    volume: int = 100,
+    volume: int | None = 100,
 ) -> PriceBar:
     return PriceBar(
         timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=day),
@@ -170,6 +170,9 @@ def test_calculate_indicators_returns_typed_bundle_with_warnings() -> None:
     assert bundle.symbol == "AAPL"
     assert bundle.horizon == "3m"
     assert bundle.rsi is not None
+    assert bundle.rsi.signal == "bearish"
+    assert bundle.rsi.explanation is not None
+    assert "overbought" in bundle.rsi.explanation
     assert bundle.macd is not None
     assert bundle.moving_averages["20"] == pytest.approx(149.5)
     assert bundle.moving_averages["50"] == pytest.approx(134.5)
@@ -179,6 +182,35 @@ def test_calculate_indicators_returns_typed_bundle_with_warnings() -> None:
     assert bundle.volume_trend is not None
     assert bundle.volume_trend.direction == "increasing"
     assert "Not enough price history for SMA 200." in bundle.warnings
+
+
+def test_calculate_indicators_warns_without_short_history_confidence() -> None:
+    bars = [_bar(day, close=100 + day) for day in range(14)]
+
+    bundle = calculate_indicators("MSFT", bars)
+
+    assert bundle.rsi is None
+    assert bundle.signals == []
+    assert bundle.moving_averages == {}
+    assert bundle.bollinger_bands is None
+    assert bundle.macd.macd is None
+    assert "Not enough price history for RSI 14." in bundle.warnings
+    assert "Not enough price history for SMA 20." in bundle.warnings
+    assert "Not enough volume history for volume trend." in bundle.warnings
+
+
+def test_calculate_indicators_warns_when_volume_is_missing() -> None:
+    bars = [_bar(day, close=100 + day, volume=None) for day in range(25)]
+
+    bundle = calculate_indicators("MSFT", bars)
+
+    assert bundle.volume_trend is not None
+    assert bundle.volume_trend.direction == "insufficient_data"
+    assert (
+        "25 price bars are missing volume; volume trend may be incomplete."
+        in bundle.warnings
+    )
+    assert "Not enough volume history for volume trend." in bundle.warnings
 
 
 def test_calculate_indicators_accepts_marketdata_price_history_for_aapl() -> None:
@@ -230,4 +262,8 @@ def test_calculate_indicators_accepts_marketdata_price_history_for_aapl() -> Non
     assert bundle.support_levels
     assert bundle.resistance_levels
     assert bundle.signals == [bundle.rsi]
-    assert bundle.warnings == ["Not enough price history for SMA 200."]
+    assert "Not enough price history for SMA 200." in bundle.warnings
+    assert (
+        "Support/resistance levels are simple estimated levels, "
+        "not exact price targets."
+    ) in bundle.warnings

@@ -37,6 +37,12 @@ def calculate_indicators(
     normalized_bars = normalize_bars(bars)
     closes = [to_float(bar.close) for bar in normalized_bars]
     warnings: list[str] = []
+    missing_volume_count = sum(1 for bar in normalized_bars if bar.volume is None)
+    if missing_volume_count:
+        warnings.append(
+            f"{missing_volume_count} price bars are missing volume; "
+            "volume trend may be incomplete."
+        )
 
     moving_averages: dict[str, float] = {}
     for period in sma_periods:
@@ -55,7 +61,7 @@ def calculate_indicators(
             name="RSI",
             value=rsi_value,
             signal=_rsi_signal(rsi_value),
-            explanation="RSI below 30 is oversold; above 70 is overbought.",
+            explanation=_rsi_explanation(rsi_value),
         )
 
     macd_value = macd(closes)
@@ -77,6 +83,11 @@ def calculate_indicators(
         warnings.append("Not enough volume history for volume trend.")
 
     support_levels, resistance_levels = support_resistance(normalized_bars)
+    if support_levels or resistance_levels:
+        warnings.append(
+            "Support/resistance levels are simple estimated levels, "
+            "not exact price targets."
+        )
     if not support_levels:
         warnings.append("No support levels detected.")
     if not resistance_levels:
@@ -111,6 +122,14 @@ def _rsi_signal(value: float) -> Literal[
     if value > 70:
         return "bearish"
     return "neutral"
+
+
+def _rsi_explanation(value: float) -> str:
+    if value < 30:
+        return "RSI is oversold; values below 30 can indicate bullish mean-reversion risk."
+    if value > 70:
+        return "RSI is overbought; values above 70 can indicate bearish mean-reversion risk."
+    return "RSI is neutral; values below 30 are oversold and above 70 are overbought."
 
 
 __all__ = [
