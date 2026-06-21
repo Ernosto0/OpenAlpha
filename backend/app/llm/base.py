@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import datetime, timezone
+from typing import Any, Literal, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+
+ProviderOperation = Callable[[], Awaitable["LLMResult"]]
+TModel = TypeVar("TModel", bound=BaseModel)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class LLMProviderError(Exception):
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class LLMConfigurationError(LLMProviderError):
+    pass
+
+
+class LLMResponseValidationError(LLMProviderError):
+    pass
+
+
+class LLMMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_content(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("message content must not be empty")
+        return stripped
+
+
+class TokenUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+
+
+class LLMResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    provider: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=120)
+    agent_name: str = Field(default="unknown", min_length=1, max_length=120)
+    content: Any | None = None
+    raw_content: str | None = None
+    raw_response: dict[str, Any] | None = None
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utc_now)
+    warnings: list[str] = Field(default_factory=list)
+    parsing_errors: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+
+    @classmethod
+    def failed(
+        cls,
+        *,
+        provider: str,
+        model: str,
+        agent_name: str,
+        error_message: str,
+        warnings: Sequence[str] = (),
+    ) -> "LLMResult":
+        return cls(
+            provider=provider,
+            model=model,
+            agent_name=agent_name,
+            error_message=error_message,
+            warnings=list(warnings),
+        )
+
+
+class BaseLLMProvider(ABC):
+    provider_name: str
+
+    def __init__(
+        self,
+        *,
+        default_model: str | None = None,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.5,
+    ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be greater than or equal to 0")
+        if retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be greater than or equal to 0")
+
+        self.default_model = default_model
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+
+    @abstractmethod
+    async def generate(
+        self,
+        *,
+        messages: Sequence[LLMMessage | Mapping[str, str]],
+        model: str | None = None,
+        agent_name: str = "unknown",
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+    ) -> LLMResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def generate_json(
+        self,
+        *,
+        messages: Sequence[LLMMessage | Mapping[str, str]],
+        output_schema: type[TModel],
+        model: str | None = None,
+        agent_name: str = "unknown",
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+    ) -> LLMResult:
+        raise NotImplementedError
+
+    def resolve_model(self, model: str | None) -> str:
+        resolved = (model or self.default_model or "").strip()
+        if not resolved:
+            raise LLMConfigurationError(
+                f"{self.provider_name} model is required",
+                retryable=False,
+            )
+        return resolved
+
+    def normalize_messages(
+        self,
+        messages: Sequence[LLMMessage | Mapping[str, str]],
+    ) -> list[LLMMessage]:
+        if not messages:
+            raise ValueError("messages must not be empty")
+        return [
+            message
+            if isinstance(message, LLMMessage)
+            else LLMMessage.model_validate(message)
+            for message in messages
+        ]
+
+    def calculate_cost(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> tuple[float, list[str]]:
+        return 0.0, [f"No pricing configured for {self.provider_name}/{model}."]
+
+    def validate_json_content(
+        self,
+        raw_content: str,
+        output_schema: type[TModel],
+    ) -> TModel:
+        try:
+            return output_schema.model_validate_json(raw_content)
+        except ValidationError as exc:
+            raise LLMResponseValidationError(
+                f"LLM JSON response failed {output_schema.__name__} validation: {exc}",
+                retryable=True,
+            ) from exc
+        except ValueError as exc:
+            raise LLMResponseValidationError(
+                f"LLM response was not valid JSON: {exc}",
+                retryable=True,
+            ) from exc
+
+    def validate_json_dict(
+        self,
+        content: dict[str, Any],
+        output_schema: type[TModel],
+    ) -> TModel:
+        try:
+            return output_schema.model_validate(content)
+        except ValidationError as exc:
+            formatted = json.dumps(content, sort_keys=True)
+            raise LLMResponseValidationError(
+                (
+                    f"LLM JSON object failed {output_schema.__name__} validation: "
+                    f"{exc}; content={formatted}"
+                ),
+                retryable=True,
+            ) from exc
+
+    async def _run_with_retries(self, operation: ProviderOperation) -> LLMResult:
+        last_error: LLMProviderError | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await operation()
+            except LLMProviderError as exc:
+                last_error = exc
+                if not exc.retryable or attempt >= self.max_retries:
+                    raise
+
+                delay = self.retry_backoff_seconds * (2**attempt)
+                if delay:
+                    await asyncio.sleep(delay)
+
+        if last_error is not None:
+            raise last_error
+        raise LLMProviderError("LLM operation failed without an error")
