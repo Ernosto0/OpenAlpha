@@ -191,6 +191,13 @@ class BollingerBands(OpenAlphaSchema):
     lower: float | None = None
 
 
+class VolumeTrendValue(OpenAlphaSchema):
+    direction: Literal["increasing", "decreasing", "flat", "insufficient_data"]
+    short_average: float | None = Field(default=None, ge=0)
+    long_average: float | None = Field(default=None, ge=0)
+    ratio: float | None = Field(default=None, ge=0)
+
+
 class IndicatorBundle(OpenAlphaSchema):
     symbol: str = Field(min_length=1, max_length=32)
     horizon: Horizon
@@ -200,6 +207,7 @@ class IndicatorBundle(OpenAlphaSchema):
     moving_averages: dict[str, float] = Field(default_factory=dict)
     bollinger_bands: BollingerBands | None = None
     atr: float | None = Field(default=None, ge=0)
+    volume_trend: VolumeTrendValue | None = None
     volatility: float | None = Field(default=None, ge=0)
     support_levels: list[float] = Field(default_factory=list)
     resistance_levels: list[float] = Field(default_factory=list)
