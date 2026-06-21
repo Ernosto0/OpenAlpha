@@ -75,10 +75,11 @@ def run_app(args: argparse.Namespace) -> int:
     backend_url = f"http://{BACKEND_HOST}:{backend_port}"
     frontend_url = f"http://{FRONTEND_HOST}:{frontend_port}"
 
-    _print_startup_message(frontend_url=frontend_url, backend_url=backend_url)
-
     env = os.environ.copy()
     env.setdefault("VITE_API_BASE_URL", backend_url)
+    env = _prepare_database(project_root=project_root, env=env)
+
+    _print_startup_message(frontend_url=frontend_url, backend_url=backend_url)
 
     try:
         processes.append(
@@ -121,6 +122,42 @@ def run_app(args: argparse.Namespace) -> int:
     finally:
         for process in processes:
             _terminate_process_tree(process)
+
+
+def _prepare_database(*, project_root: Path, env: dict[str, str]) -> dict[str, str]:
+    env.setdefault("DATABASE_URL", _default_database_url(project_root))
+    previous_database_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = env["DATABASE_URL"]
+
+    try:
+        from backend.app.db.session import init_db
+
+        print("Setting up local database...", flush=True)
+        init_db()
+        print(
+            f"Database ready: {_display_database_url(env['DATABASE_URL'])}",
+            flush=True,
+        )
+    finally:
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+
+    return env
+
+
+def _default_database_url(project_root: Path) -> str:
+    database_path = project_root / "openalpha.db"
+    return f"sqlite:///{database_path.as_posix()}"
+
+
+def _display_database_url(database_url: str) -> str:
+    sqlite_prefix = "sqlite:///"
+    if database_url.startswith(sqlite_prefix):
+        return database_url.removeprefix(sqlite_prefix)
+
+    return database_url
 
 
 def _print_startup_message(*, frontend_url: str, backend_url: str) -> None:

@@ -5,6 +5,8 @@ from collections.abc import Iterator
 from sqlmodel import Session, SQLModel, create_engine
 
 from backend.app.core.config import settings
+from backend.app.db import models  # noqa: F401
+from backend.app.db.migrations import run_migrations
 
 
 connect_args = (
@@ -20,6 +22,7 @@ engine = create_engine(
 
 
 def init_db() -> None:
+    run_migrations(engine)
     SQLModel.metadata.create_all(engine)
 
 
