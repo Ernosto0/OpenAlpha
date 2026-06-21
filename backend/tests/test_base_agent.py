@@ -36,10 +36,11 @@ class SuccessfulRiskAgent(BaseAgent[RiskReviewAgentOutput]):
             estimated_cost_usd=0.001,
             data_used=["market_data"],
             output={
-                "risk_level": "medium",
-                "confidence": 0.7,
-                "summary": "Risk is balanced but not negligible.",
-                "key_risks": ["Valuation sensitivity"],
+                "risk_level": "moderate",
+                "risk_score": 42,
+                "main_risks": ["Valuation sensitivity"],
+                "invalidation_conditions": ["The evidence would weaken if trend support breaks."],
+                "confidence_adjustment": -0.05,
             },
         )
 
@@ -54,9 +55,11 @@ class InvalidOutputAgent(BaseAgent[RiskReviewAgentOutput]):
             output_tokens=10,
             estimated_cost_usd=0.0002,
             output={
-                "risk_level": "medium",
-                "confidence": 2,
-                "summary": "Invalid confidence should fail validation.",
+                "risk_level": "moderate",
+                "risk_score": 120,
+                "main_risks": ["This should fail validation."],
+                "invalidation_conditions": ["Invalid score should trigger schema validation."],
+                "confidence_adjustment": -0.05,
             },
         )
 

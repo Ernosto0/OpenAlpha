@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import urllib.error
 import urllib.request
@@ -29,7 +28,7 @@ OpenAITransport = Callable[
     Mapping[str, Any] | Awaitable[Mapping[str, Any]],
 ]
 
-
+# Cheap models for testing and experimentation
 OPENAI_PRICING_USD_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
     "gpt-4.1": (2.00, 8.00),
     "gpt-4.1-mini": (0.40, 1.60),
@@ -233,7 +232,7 @@ class OpenAIProvider(BaseLLMProvider):
             payload,
             self.timeout_seconds,
         )
-        if inspect.isawaitable(result):
+        if asyncio.iscoroutine(result):
             result = await result
         return result
 
