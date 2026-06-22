@@ -7,12 +7,16 @@ from pydantic import ValidationError
 
 from backend.app.orchestrator.schemas import (
     DISCLAIMER,
+    AgentSummaries,
     AgentResult,
     AnalysisContext,
     AnalysisRequest,
     BearCaseAgentOutput,
     DataQualitySummary,
+    FinalReportCostBreakdown,
+    FinalReportDataQualitySection,
     FinalReport,
+    FinalReportRiskSection,
     MarketDataBundle,
     RiskReviewAgentOutput,
     ThesisAgentOutput,
@@ -156,38 +160,46 @@ def test_analysis_context_supports_thesis_output() -> None:
 
 
 def test_final_report_supports_v1_ai_views_and_disclaimer() -> None:
-    request = AnalysisRequest(
-        symbol="tsla",
-        horizon="1w",
-        depth="quick",
-        llm_model="gpt-4.1-mini",
-    )
     report = FinalReport(
-        report_id="report_1",
-        run_id="run_1",
-        request=request,
         symbol="tsla",
-        market=request.market,
-        horizon=request.horizon,
-        depth=request.depth,
-        language=request.language,
-        ai_view="insufficient_data",
+        title="Equity Research Report: TSLA",
+        company_name="Tesla, Inc.",
+        market="US",
+        overall_view="insufficient_data",
         confidence=0,
-        risk_level="insufficient_data",
+        horizon="1w",
+        executive_summary="Insufficient reliable data to form a confident view.",
         investment_thesis="Insufficient reliable data to form a thesis.",
-        data_quality=DataQualitySummary(score=0.2),
-        provider=request.llm_provider,
-        model=request.llm_model,
-        market_data=MarketDataBundle(symbol="tsla", market="US"),
-        generated_at=datetime.now(timezone.utc),
+        base_case="The base case remains uncertain because key inputs are missing.",
+        bull_case_summary="The bull case cannot be established with confidence.",
+        bear_case_summary="The bear case cannot be established with confidence.",
+        agent_summaries=AgentSummaries(
+            technical="Technical evidence is unavailable.",
+            news_sentiment="News evidence is unavailable.",
+            bull_case="Bull case evidence is unavailable.",
+            bear_case="Bear case evidence is unavailable.",
+            risk_review="Risk cannot be assessed with confidence.",
+        ),
+        risk_section=FinalReportRiskSection(
+            risk_level="insufficient_data",
+            risk_score=0,
+            confidence_adjustment=0,
+        ),
+        data_quality_section=FinalReportDataQualitySection(
+            data_quality_score=0.2,
+            warnings=["Key inputs are missing."],
+        ),
+        cost_breakdown=FinalReportCostBreakdown(total_estimated_cost_usd=0),
+        report_markdown="# TSLA\n\nInsufficient reliable data.",
+        created_at=datetime.now(timezone.utc),
     )
 
     assert report.symbol == "TSLA"
-    assert report.ai_view == "insufficient_data"
+    assert report.overall_view == "insufficient_data"
     assert report.disclaimer == DISCLAIMER
 
     invalid_report = report.model_dump()
-    invalid_report["ai_view"] = "buy_now"
+    invalid_report["overall_view"] = "buy_now"
 
     with pytest.raises(ValidationError):
         FinalReport.model_validate(invalid_report)
