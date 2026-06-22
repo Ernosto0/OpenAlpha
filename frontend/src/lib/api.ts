@@ -186,6 +186,49 @@ export type ReportDetail = ReportSummary & {
   warnings: string[];
 };
 
+export type PerformanceSummary = {
+  direction_correctness: number | null;
+  relative_performance: number | null;
+  evaluated_reports: number;
+  total_reports: number;
+  average_hold_days: number | null;
+};
+
+export type PerformanceBreakdownItem = {
+  label: string;
+  correctness_rate: number | null;
+  evaluated_count: number;
+  average_return: number | null;
+  average_alpha: number | null;
+};
+
+export type PerformanceEvaluationItem = {
+  report_id: string;
+  symbol: string;
+  market: string;
+  horizon: string;
+  overall_view: string;
+  model: string;
+  report_created_at: string;
+  evaluation_status: "interim" | "matured";
+  days_elapsed: number;
+  target_days: number;
+  entry_price: number | null;
+  latest_price: number | null;
+  realized_return: number | null;
+  benchmark_symbol: string | null;
+  benchmark_return: number | null;
+  alpha: number | null;
+  direction_result: "correct" | "incorrect" | "not_scored";
+};
+
+export type PerformanceResponse = {
+  summary: PerformanceSummary;
+  by_model: PerformanceBreakdownItem[];
+  by_horizon: PerformanceBreakdownItem[];
+  recent_evaluations: PerformanceEvaluationItem[];
+};
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8000";
@@ -263,6 +306,7 @@ export const api = {
     new WebSocket(`${WS_BASE_URL}/ws/analysis/${runId}`),
   listReports: () => request<ReportSummary[]>("/api/reports"),
   getReport: (id: string) => request<ReportDetail>(`/api/reports/${id}`),
+  getPerformance: () => request<PerformanceResponse>("/api/performance"),
 };
 
 export { ApiError };
