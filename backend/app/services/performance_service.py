@@ -326,6 +326,8 @@ class PerformanceService:
     ) -> PerformanceDirectionResult:
         if realized_return is None:
             return "not_scored"
+        if realized_return == 0:
+            return "not_scored"
         if overall_view in UP_VIEWS:
             return "correct" if realized_return > 0 else "incorrect"
         if overall_view in DOWN_VIEWS:

@@ -109,6 +109,18 @@ def build_test_service() -> PerformanceService:
                     report_json={},
                     created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
                 ),
+                Report(
+                    id="report_5",
+                    analysis_run_id="run_5",
+                    symbol="MSFT",
+                    market="US",
+                    horizon="1m",
+                    overall_view="slightly_bearish",
+                    confidence=0.5,
+                    risk_level="medium",
+                    report_json={},
+                    created_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+                ),
             ]
         )
         session.add_all(
@@ -157,6 +169,17 @@ def build_test_service() -> PerformanceService:
                     cost_usd=0.01,
                     created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
                 ),
+                CostTrace(
+                    id="trace_5",
+                    analysis_run_id="run_5",
+                    agent_name="thesis_agent",
+                    provider="openai",
+                    model="gpt-4.1-mini",
+                    input_tokens=10,
+                    output_tokens=10,
+                    cost_usd=0.01,
+                    created_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+                ),
             ]
         )
         session.commit()
@@ -173,6 +196,10 @@ def build_test_service() -> PerformanceService:
         "SAP": [
             PriceBar(timestamp=datetime(2026, 5, 2, tzinfo=timezone.utc), close=100),
             PriceBar(timestamp=datetime(2026, 6, 20, tzinfo=timezone.utc), close=110),
+        ],
+        "MSFT": [
+            PriceBar(timestamp=datetime(2026, 6, 20, tzinfo=timezone.utc), close=100),
+            PriceBar(timestamp=datetime(2026, 6, 20, tzinfo=timezone.utc), close=100),
         ],
         "SPY": [
             PriceBar(timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc), close=100),
@@ -195,21 +222,22 @@ async def test_performance_service_computes_summary_and_breakdowns() -> None:
 
     response = await service.get_performance()
 
-    assert response.summary.total_reports == 4
-    assert response.summary.evaluated_reports == 3
+    assert response.summary.total_reports == 5
+    assert response.summary.evaluated_reports == 4
     assert response.summary.direction_correctness == 1.0
-    assert response.summary.relative_performance == pytest.approx(-0.155, abs=1e-9)
-    assert response.summary.average_hold_days == pytest.approx(121.66666666666667)
+    assert response.summary.relative_performance == pytest.approx(-0.10333333333333335, abs=1e-9)
+    assert response.summary.average_hold_days == pytest.approx(91.75)
 
     by_model = {item.label: item for item in response.by_model}
     assert by_model["gpt-4o"].evaluated_count == 1
     assert by_model["gpt-4o"].correctness_rate == 1.0
-    assert by_model["gpt-4.1-mini"].average_return == pytest.approx(-0.2)
+    assert by_model["gpt-4.1-mini"].average_return == pytest.approx(-0.1)
     assert by_model["deterministic"].average_alpha is None
 
     by_horizon = {item.label: item for item in response.by_horizon}
     assert by_horizon["1y"].correctness_rate is None
     assert by_horizon["1w"].evaluated_count == 0
+    assert by_horizon["1m"].correctness_rate == 1.0
 
     recent = {item.report_id: item for item in response.recent_evaluations}
     assert recent["report_3"].evaluation_status == "interim"
@@ -217,6 +245,8 @@ async def test_performance_service_computes_summary_and_breakdowns() -> None:
     assert recent["report_3"].alpha is None
     assert recent["report_4"].realized_return is None
     assert recent["report_2"].direction_result == "correct"
+    assert recent["report_5"].realized_return == 0.0
+    assert recent["report_5"].direction_result == "not_scored"
 
 
 @pytest.mark.anyio
@@ -236,8 +266,8 @@ async def test_performance_endpoint_returns_payload(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["summary"]["total_reports"] == 4
-    assert data["summary"]["evaluated_reports"] == 3
+    assert data["summary"]["total_reports"] == 5
+    assert data["summary"]["evaluated_reports"] == 4
     assert len(data["by_model"]) == 3
-    assert len(data["recent_evaluations"]) == 4
-    assert data["recent_evaluations"][0]["report_id"] == "report_3"
+    assert len(data["recent_evaluations"]) == 5
+    assert data["recent_evaluations"][0]["report_id"] == "report_5"
