@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -36,6 +37,8 @@ OPENAI_PRICING_USD_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
 }
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -84,6 +87,7 @@ class OpenAIProvider(BaseLLMProvider):
                 max_output_tokens=max_output_tokens,
             )
             response = await self._request(payload)
+            self._raise_for_incomplete_response(response)
             raw_content = self._extract_output_text(response)
             usage = self._extract_usage(response)
             cost, warnings = self.calculate_cost(
@@ -128,6 +132,7 @@ class OpenAIProvider(BaseLLMProvider):
                 output_schema=output_schema,
             )
             response = await self._request(payload)
+            self._raise_for_incomplete_response(response)
             raw_content = self._extract_output_text(response)
             content = self.validate_json_content(raw_content, output_schema)
             usage = self._extract_usage(response)
@@ -248,6 +253,10 @@ class OpenAIProvider(BaseLLMProvider):
         return normalized
 
     async def _request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        logger.info(
+            "OpenAI request started",
+            extra=self._log_extra(payload),
+        )
         headers = {
             "Authorization": f"Bearer {self._api_key_value()}",
             "Content-Type": "application/json",
@@ -260,6 +269,10 @@ class OpenAIProvider(BaseLLMProvider):
         )
         if asyncio.iscoroutine(result):
             result = await result
+        logger.info(
+            "OpenAI request completed",
+            extra=self._log_extra(payload, response=result),
+        )
         return result
 
     async def _post_json(
@@ -298,6 +311,14 @@ class OpenAIProvider(BaseLLMProvider):
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
             error_message = self._error_message(error_body)
+            logger.warning(
+                "OpenAI HTTP error",
+                extra=self._log_extra(
+                    payload,
+                    status_code=exc.code,
+                    error_message=error_message,
+                ),
+            )
             retryable = exc.code in {408, 409, 429, 500, 502, 503, 504}
             if exc.code in {401, 403} or (
                 exc.code == 429 and self._is_fatal_auth_or_quota_error(error_message)
@@ -309,6 +330,13 @@ class OpenAIProvider(BaseLLMProvider):
                 status_code=exc.code,
             ) from exc
         except urllib.error.URLError as exc:
+            logger.warning(
+                "OpenAI network error",
+                extra=self._log_extra(
+                    payload,
+                    error_message=str(exc.reason),
+                ),
+            )
             raise LLMProviderError(
                 f"OpenAI API request failed: {exc.reason}",
                 retryable=True,
@@ -317,19 +345,32 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             data = json.loads(response_body)
         except json.JSONDecodeError as exc:
+            logger.warning(
+                "OpenAI returned invalid JSON",
+                extra=self._log_extra(payload, error_message=str(exc)),
+            )
             raise LLMProviderError(
                 f"OpenAI API returned invalid JSON: {exc}",
                 retryable=True,
             ) from exc
 
         if not isinstance(data, dict):
+            logger.warning(
+                "OpenAI returned unexpected response shape",
+                extra=self._log_extra(payload),
+            )
             raise LLMProviderError(
                 "OpenAI API returned an unexpected response shape.",
                 retryable=True,
             )
-        if "error" in data:
+        api_error = self._extract_api_error(data)
+        if api_error is not None:
+            logger.warning(
+                "OpenAI API reported an error",
+                extra=self._log_extra(payload, response=data, error_message=api_error),
+            )
             raise LLMProviderError(
-                f"OpenAI API error: {data['error']}",
+                f"OpenAI API error: {api_error}",
                 retryable=False,
             )
         return data
@@ -364,6 +405,37 @@ class OpenAIProvider(BaseLLMProvider):
             retryable=True,
         )
 
+    def _raise_for_incomplete_response(self, response: Mapping[str, Any]) -> None:
+        status = response.get("status")
+        if status != "incomplete":
+            return
+
+        incomplete_details = response.get("incomplete_details")
+        reason = None
+        if isinstance(incomplete_details, dict):
+            raw_reason = incomplete_details.get("reason")
+            if isinstance(raw_reason, str) and raw_reason.strip():
+                reason = raw_reason.strip()
+
+        error_message = "OpenAI response was incomplete."
+        retryable = True
+        if reason == "max_output_tokens":
+            error_message = (
+                "OpenAI response was incomplete because max_output_tokens was reached."
+            )
+            retryable = False
+        elif reason:
+            error_message = f"OpenAI response was incomplete: {reason}."
+
+        logger.warning(
+            "OpenAI response incomplete",
+            extra={
+                "openai_response_status": status,
+                "openai_incomplete_reason": reason,
+            },
+        )
+        raise LLMProviderError(error_message, retryable=retryable)
+
     def _extract_usage(self, response: Mapping[str, Any]) -> TokenUsage:
         usage = response.get("usage")
         if not isinstance(usage, dict):
@@ -393,12 +465,72 @@ class OpenAIProvider(BaseLLMProvider):
             return error_body.strip() or "No error body returned."
 
         if isinstance(data, dict):
-            error = data.get("error")
-            if isinstance(error, dict):
-                message = error.get("message")
-                if isinstance(message, str) and message.strip():
-                    return message.strip()
+            error_message = self._extract_api_error(data)
+            if error_message:
+                return error_message
         return error_body.strip() or "No error body returned."
+
+    def _extract_api_error(self, data: Mapping[str, Any]) -> str | None:
+        error = data.get("error")
+        if error is None:
+            return None
+        if isinstance(error, str):
+            stripped = error.strip()
+            return stripped or None
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+            serialized = json.dumps(error, sort_keys=True)
+            return serialized if serialized != "{}" else None
+        if error:
+            return str(error)
+        return None
+
+    def _log_extra(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        response: Mapping[str, Any] | None = None,
+        status_code: int | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        input_items = payload.get("input")
+        message_count = len(input_items) if isinstance(input_items, list) else 0
+        input_chars = 0
+        if isinstance(input_items, list):
+            for item in input_items:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if isinstance(content, str):
+                    input_chars += len(content)
+
+        extra: dict[str, Any] = {
+            "llm_provider": self.provider_name,
+            "llm_model": payload.get("model"),
+            "openai_message_count": message_count,
+            "openai_input_chars": input_chars,
+            "openai_has_schema": "text" in payload,
+            "openai_max_output_tokens": payload.get("max_output_tokens"),
+            "openai_temperature": payload.get("temperature"),
+        }
+        if status_code is not None:
+            extra["status_code"] = status_code
+        if error_message is not None:
+            extra["error_message"] = error_message
+        if response is not None:
+            extra["openai_response_id"] = response.get("id")
+            extra["openai_response_status"] = response.get("status")
+            incomplete_details = response.get("incomplete_details")
+            if isinstance(incomplete_details, dict):
+                extra["openai_incomplete_reason"] = incomplete_details.get("reason")
+            usage = response.get("usage")
+            if isinstance(usage, dict):
+                extra["openai_input_tokens"] = usage.get("input_tokens")
+                extra["openai_output_tokens"] = usage.get("output_tokens")
+                extra["openai_total_tokens"] = usage.get("total_tokens")
+        return extra
 
     def _is_fatal_auth_or_quota_error(self, message: str) -> bool:
         normalized = message.lower()

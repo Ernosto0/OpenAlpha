@@ -244,4 +244,21 @@ def test_thesis_agent_stops_when_quota_is_exceeded() -> None:
     assert result.status == "failed"
     assert result.fatal_error is True
     assert "quota exceeded" in (result.error_message or "")
-    assert context.latest_agent_result("thesis_agent") == result
+    assert context.agent_results[-1] == result
+
+
+def test_thesis_agent_prompt_truncates_large_market_payload() -> None:
+    context = make_context(include_upstream_outputs=True)
+    context.market_data.price_history = [
+        PriceBar(timestamp=f"2026-05-{day:02d}T00:00:00Z", close=150 + day)
+        for day in range(1, 26)
+    ]
+    provider = FakeLLMProvider()
+
+    asyncio.run(ThesisAgent(llm_provider=provider).run(context))
+
+    prompt = provider.calls[0]["messages"][1]["content"]
+    assert '"price_history_count": 25' in prompt
+    assert '"news_count": 0' in prompt
+    assert "2026-05-01T00:00:00Z" not in prompt
+    assert "2026-05-25T00:00:00Z" in prompt

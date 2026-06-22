@@ -20,6 +20,10 @@ from backend.app.orchestrator.schemas import (
     ThesisAgentOutput,
 )
 
+PROMPT_PRICE_HISTORY_LIMIT = 12
+PROMPT_NEWS_LIMIT = 8
+PROMPT_SOURCES_LIMIT = 8
+
 
 THESIS_AGENT_SYSTEM_PROMPT = """
 You are the Thesis Agent for OpenAlpha, a local-first AI equity research application.
@@ -391,14 +395,35 @@ class ThesisAgent(BaseAgent[ThesisAgentOutput]):
         if context.market_data is None and context.data_quality is None:
             return None
 
-        return DataCollectorOutput(
-            market_data=context.market_data
-            if context.market_data is not None
-            else self._fallback_market_data_bundle(context),
+        market_data = context.market_data or self._fallback_market_data_bundle(context)
+        payload = DataCollectorOutput(
+            market_data=market_data,
             data_quality=context.data_quality
             if context.data_quality is not None
             else DataQualitySummary(),
         ).model_dump(mode="json")
+
+        market_payload = payload["market_data"]
+        price_history = market_payload.get("price_history")
+        if isinstance(price_history, list):
+            market_payload["price_history_count"] = len(price_history)
+            market_payload["price_history"] = price_history[-PROMPT_PRICE_HISTORY_LIMIT:]
+
+        news_items = market_payload.get("news")
+        if isinstance(news_items, list):
+            market_payload["news_count"] = len(news_items)
+            market_payload["news"] = news_items[:PROMPT_NEWS_LIMIT]
+
+        sources = market_payload.get("sources")
+        if isinstance(sources, list):
+            market_payload["sources_count"] = len(sources)
+            market_payload["sources"] = sources[:PROMPT_SOURCES_LIMIT]
+
+        company_profile = market_payload.get("company_profile")
+        if isinstance(company_profile, dict):
+            company_profile.pop("description", None)
+
+        return payload
 
     def _data_collector_output_text(self, context: AnalysisContext) -> str:
         payload = self._data_collector_output_payload(context)

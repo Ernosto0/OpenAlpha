@@ -213,6 +213,54 @@ def test_openai_generate_json_reports_validation_errors() -> None:
         )
 
 
+def test_openai_generate_json_ignores_null_top_level_error() -> None:
+    provider = OpenAIProvider(
+        api_key="test-key",
+        default_model="gpt-4.1-mini",
+        transport=lambda *_args: {
+            "id": "resp_123",
+            "status": "completed",
+            "error": None,
+            **response_with_text('{"rating": "ok", "score": 0.6}'),
+        },
+    )
+
+    result = asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "Analyze META."}],
+            output_schema=ExampleOutput,
+        )
+    )
+
+    assert result.content.rating == "ok"
+    assert result.content.score == pytest.approx(0.6)
+
+
+def test_openai_generate_json_reports_incomplete_response_reason() -> None:
+    provider = OpenAIProvider(
+        api_key="test-key",
+        default_model="gpt-4.1-mini",
+        max_retries=0,
+        transport=lambda *_args: {
+            "id": "resp_456",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            **response_with_text('{"rating":"ok"'),
+        },
+    )
+
+    with pytest.raises(
+        LLMProviderError,
+        match="max_output_tokens was reached",
+    ):
+        asyncio.run(
+            provider.generate_json(
+                messages=[{"role": "user", "content": "Analyze NFLX."}],
+                output_schema=ExampleOutput,
+            )
+        )
+
+
 def test_openai_requires_api_key_before_request(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

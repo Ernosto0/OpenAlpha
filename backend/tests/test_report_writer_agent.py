@@ -12,6 +12,7 @@ from backend.app.orchestrator.schemas import (
     CompanyProfile,
     DataQualitySummary,
     MarketDataBundle,
+    PriceBar,
     RiskReviewAgentOutput,
     ThesisAgentOutput,
 )
@@ -99,4 +100,34 @@ def test_report_writer_agent_stops_when_quota_is_exceeded() -> None:
     assert result.status == "failed"
     assert result.fatal_error is True
     assert "quota exceeded" in (result.error_message or "")
-    assert context.latest_agent_result("report_writer_agent") == result
+    assert context.agent_results[-1] == result
+
+
+def test_report_writer_prompt_truncates_large_market_payload() -> None:
+    context = make_context()
+    context.market_data.price_history = [
+        PriceBar(timestamp=f"2026-04-{day:02d}T00:00:00Z", close=170 + day)
+        for day in range(1, 26)
+    ]
+
+    class CapturingLLMProvider:
+        provider_name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        async def generate_json(self, **kwargs: object) -> LLMResult:
+            self.calls.append(kwargs)
+            raise LLMProviderError(
+                "OpenAI API returned HTTP 400: invalid response format",
+                retryable=True,
+            )
+
+    provider = CapturingLLMProvider()
+    asyncio.run(ReportWriterAgent(llm_provider=provider).run(context))
+
+    prompt = provider.calls[0]["messages"][1]["content"]
+    assert provider.calls[0]["max_output_tokens"] == 5000
+    assert '"price_history_count": 25' in prompt
+    assert "2026-04-01T00:00:00Z" not in prompt
+    assert "2026-04-25T00:00:00Z" in prompt

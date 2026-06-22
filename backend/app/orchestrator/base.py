@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
@@ -29,6 +30,8 @@ from backend.app.orchestrator.schemas import (
     OpenAlphaSchema,
     utc_now,
 )
+
+logger = logging.getLogger(__name__)
 
 
 AnalysisEventType = Literal[
@@ -168,6 +171,10 @@ class AnalysisRunner:
         context = AnalysisContext.from_request(request, run_id=run_id)
         session, owns_session = self._open_session()
         self._reset_persistence_state()
+        logger.info(
+            "Analysis run started",
+            extra={"run_id": context.run_id, "symbol": request.symbol},
+        )
 
         try:
             run_row = session.get(AnalysisRun, context.run_id)
@@ -238,6 +245,10 @@ class AnalysisRunner:
                     message=f"Analysis completed for {request.symbol}.",
                 )
             )
+            logger.info(
+                "Analysis run completed",
+                extra={"run_id": context.run_id, "symbol": request.symbol},
+            )
             return context
         except Exception as exc:
             self._mark_run_failed(
@@ -254,6 +265,10 @@ class AnalysisRunner:
                     message=f"Analysis failed for {request.symbol}.",
                     error_message=str(exc),
                 )
+            )
+            logger.exception(
+                "Analysis run failed",
+                extra={"run_id": context.run_id, "symbol": request.symbol},
             )
             raise
         finally:
@@ -288,6 +303,10 @@ class AnalysisRunner:
         agent_name: AgentName,
     ) -> AgentResult:
         agent = self.agents[agent_name]
+        logger.info(
+            "Orchestrator starting agent",
+            extra={"run_id": context.run_id, "agent_name": agent_name},
+        )
         self.event_emitter.emit(
             AnalysisEvent(
                 type="agent_started",
@@ -300,6 +319,16 @@ class AnalysisRunner:
         result: AgentResult = await agent.run(context)
         self._sync_runtime_outputs(context, result)
         self._persist_new_state(session, context)
+        if result.status == "failed":
+            logger.warning(
+                "Orchestrator agent failed",
+                extra={"run_id": context.run_id, "agent_name": agent_name},
+            )
+        else:
+            logger.info(
+                "Orchestrator agent finished",
+                extra={"run_id": context.run_id, "agent_name": agent_name},
+            )
         self.event_emitter.emit(
             AnalysisEvent(
                 type="agent_failed" if result.status == "failed" else "agent_finished",
