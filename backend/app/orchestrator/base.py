@@ -162,24 +162,35 @@ class AnalysisRunner:
         self._persisted_cost_trace_count = 0
         self._report_persisted = False
 
-    async def run(self, request: AnalysisRequest) -> AnalysisContext:
-        context = AnalysisContext.from_request(request)
-        run_row = AnalysisRun(
-            id=context.run_id,
-            symbol=request.symbol,
-            market=request.market,
-            horizon=request.horizon,
-            depth=request.depth,
-            language=request.language,
-            status="pending",
-            started_at=context.created_at,
-        )
+    async def run(
+        self, request: AnalysisRequest, run_id: str | None = None
+    ) -> AnalysisContext:
+        context = AnalysisContext.from_request(request, run_id=run_id)
         session, owns_session = self._open_session()
         self._reset_persistence_state()
 
         try:
-            session.add(run_row)
-            session.commit()
+            run_row = session.get(AnalysisRun, context.run_id)
+            if run_row is None:
+                run_row = AnalysisRun(
+                    id=context.run_id,
+                    symbol=request.symbol,
+                    market=request.market,
+                    horizon=request.horizon,
+                    depth=request.depth,
+                    language=request.language,
+                    status="pending",
+                    started_at=context.created_at,
+                )
+                session.add(run_row)
+                session.commit()
+
+            run_row.symbol = request.symbol
+            run_row.market = request.market
+            run_row.horizon = request.horizon
+            run_row.depth = request.depth
+            run_row.language = request.language
+            run_row.started_at = run_row.started_at or context.created_at
             run_row.status = "running"
             session.add(run_row)
             session.commit()

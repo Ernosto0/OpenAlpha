@@ -1,15 +1,16 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
 
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Sidebar } from "./sidebar";
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-background lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[260px_1fr]">
       <div className="hidden lg:block">
         <Sidebar />
       </div>
@@ -18,7 +19,7 @@ export function AppLayout() {
         <div className="fixed inset-0 z-40 lg:hidden">
           <button
             aria-label="Close navigation"
-            className="absolute inset-0 bg-foreground/25"
+            className="absolute inset-0 bg-background/80 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
             type="button"
           />
@@ -29,23 +30,47 @@ export function AppLayout() {
       ) : null}
 
       <div className="flex min-w-0 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur lg:hidden">
+        {/* Top Command / Search Bar */}
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background px-4 lg:px-8">
           <Button
             aria-label="Open navigation"
+            className="lg:hidden"
             onClick={() => setSidebarOpen(true)}
             size="icon"
-            variant="secondary"
+            variant="ghost"
           >
-            <Menu className="h-4 w-4" aria-hidden="true" />
+            <Menu className="h-5 w-5" aria-hidden="true" />
           </Button>
-          <div>
-            <p className="text-sm font-semibold">OpenAlpha</p>
-            <p className="text-xs text-muted-foreground">Equity research</p>
+
+          <div className="flex flex-1 items-center gap-4">
+            <div className="relative w-full max-w-md hidden sm:block">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search symbol... AAPL, MSFT, NVDA"
+                className="w-full bg-card pl-9 border-border text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
+            <div className="hidden md:flex items-center gap-1.5">
+              <span className="text-foreground">PRV:</span>
+              <span>OpenAI</span>
+            </div>
+            <div className="hidden md:flex items-center gap-1.5">
+              <span className="text-foreground">MOD:</span>
+              <span>gpt-4o</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-foreground">CST:</span>
+              <span>$0.04</span>
+            </div>
           </div>
         </header>
 
         <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
             <Outlet />
           </div>
         </main>
