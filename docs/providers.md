@@ -14,8 +14,8 @@ Current runtime truth:
 
 - market data has several implemented providers
 - news uses a multi-provider aggregation service
-- the shipped LLM runtime is OpenAI only
-- the UI and settings layer expose Ollama/local fields, but the active agent factories do not support them yet
+- the shipped remote LLM runtimes are OpenAI, Claude, and Gemini
+- the UI and settings layer expose Ollama/local fields, but the active agent factories do not support that local runtime yet
 
 ## Market Data Providers
 
@@ -170,17 +170,19 @@ Base contract:
 
 - `backend/app/llm/base.py`
 
-Implemented provider:
+Implemented providers:
 
 - `OpenAIProvider` in `backend/app/llm/providers/openai_provider.py`
+- `AnthropicProvider` in `backend/app/llm/providers/anthropic_provider.py`
+- `GeminiProvider` in `backend/app/llm/providers/gemini_provider.py`
 
 Current behavior:
 
 - agents call `generate_json()` for structured outputs
 - token usage and estimated cost are captured when the provider returns usage data
-- pricing is configured for a small set of OpenAI models
+- pricing is configured for a small set of OpenAI, Claude, and Gemini models
 
-OpenAI runtime support exists across the active LLM-backed agents.
+Remote runtime support exists across the active LLM-backed agents for OpenAI, Claude, and Gemini.
 
 ## Ollama And Local Runtime Status
 
@@ -194,7 +196,7 @@ The settings and frontend layers support:
 But current runtime limitations are important:
 
 - `POST /api/providers/llm/test` returns `untested` for `local`
-- active agent factories reject non-OpenAI providers
+- active agent factories reject the `local` provider name
 - there is no shipped Ollama LLM provider implementation in `backend/app/llm/providers/`
 
 Result:
@@ -238,5 +240,5 @@ Examples:
 
 ## Related Docs
 
-- [docs/architecture.md](/C:/Users/ernos/OpenAlpha/docs/architecture.md)
-- [docs/adding-a-new-provider.md](/C:/Users/ernos/OpenAlpha/docs/adding-a-new-provider.md)
+- [docs/architecture.md](architecture.md)
+- [docs/adding-a-new-provider.md](adding-a-new-provider.md)

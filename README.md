@@ -1,37 +1,31 @@
 # OpenAlpha
 
-OpenAlpha is a local-first AI equity research workstation.
+OpenAlpha is a local-first AI equity research workstation for public stocks.
 
-It runs a FastAPI backend, a React/Vite frontend, and a SQLite database on your machine so you can generate AI-assisted stock research reports, inspect each agent step, and review historical report performance without depending on a hosted OpenAlpha service.
+It runs on your machine, launches a multi-agent research pipeline, shows each agent step in real time, stores every report in SQLite, and tracks how past calls performed against the market.
 
-## What OpenAlpha Is
+![OpenAlpha performance tracking](docs/assets/openalpha4.png)
 
-- A local development app for AI-assisted equity research.
-- A multi-agent analysis pipeline that collects market data, interprets technicals and news, builds bull and bear cases, scores risk, writes a thesis, and persists a final report.
-- A transparent workstation: runs are stored in `openalpha.db`, agent outputs are visible, report sources are surfaced, and estimated LLM cost traces are retained.
-- A current-codebase MVP focused on public equities research, not a complete institutional research platform.
+## Why OpenAlpha
 
-## What OpenAlpha Is Not
-
-- Not a brokerage, trading system, portfolio manager, or execution engine.
-- Not a real-time market terminal.
-- Not a fully offline LLM workstation yet. factories currently support `OpenAI`, 'Claude', 'Gemini' only.
-- Not the full aspirational architecture described in [agent.md](/C:/Users/ernos/OpenAlpha/agent.md). The documentation in this repo describes the implementation that exists today.
-
-Capture workflow for replacing them later:
-
-1. Start the app with `openalpha run .`.
-2. Open the dashboard, analysis run page, and a persisted report detail page.
-3. Save PNG captures into `docs/assets/` using the filenames above.
-4. Replace this section with embedded markdown images once real captures exist.
-
-See [docs/assets/README.md](/C:/Users/ernos/OpenAlpha/docs/assets/README.md) for the placeholder asset list.
+- Local-first: FastAPI, React/Vite, and SQLite run on your machine. No hosted OpenAlpha account is required.
+- Auditable: you can inspect agent progression, outputs, sources, data-quality warnings, and estimated LLM cost traces.
+- Practical: one CLI command boots the backend and frontend together and prepares the local database.
+- Measurable: saved reports are evaluated later so you can see whether the AI's directional views were actually right.
 
 ## Quick Start
 
-Install the Python package in editable mode, install the frontend dependencies, then run both services together:
+Prerequisites:
+
+- Python `3.10+`
+- Node.js with `npm`
+
+From the repository root:
 
 ```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 pip install -e .
 cd frontend
 npm.cmd install
@@ -45,142 +39,62 @@ Default local URLs:
 - Backend API: `http://127.0.0.1:8000`
 - Health: `http://127.0.0.1:8000/api/health`
 
-Full setup details: [docs/installation-guide.md](/C:/Users/ernos/OpenAlpha/docs/installation-guide.md)
+If a preferred port is already taken, `openalpha run .` automatically searches for the next available local port.
 
-## Add An API Key In Settings
+## What You Can Do Today
 
-1. Start OpenAlpha.
-2. Open `Settings`.
-3. Paste an OpenAI API key into `OpenAI API Key`.
-4. Click `Apply Settings`.
-5. Click `Test OpenAI` to verify the key.
+- Launch a research run from the dashboard or analysis page with a symbol, market, horizon, depth, provider, model, and optional research focus.
+- Watch the live execution graph as the current pipeline runs:
+  `data_collector -> technical/news -> bull/bear -> risk -> thesis -> report_writer`
+- Review the final persisted report with summary, thesis, bull and bear cases, risk scoring, data quality, sources, and cost telemetry.
+- Browse historical reports in the local report store.
+- Evaluate past reports on the performance page, including direction correctness and relative performance versus `SPY` for US equities.
 
-Current-state note:
+![OpenAlpha analysis execution trace](docs/assets/openalpha2.png)
 
-- The settings UI also exposes `Ollama Base URL`, `Ollama Model`, and `Test Ollama`.
-- The backend stores those values locally, but live Ollama testing is not implemented and the runtime agents do not yet instantiate an Ollama provider.
+![OpenAlpha reports and audit history](docs/assets/openalpha3.png)
 
-Provider details: [docs/providers.md](/C:/Users/ernos/OpenAlpha/docs/providers.md)
+## Supported Providers
 
-## Run An Analysis
+### LLM Providers
 
-1. Open `Analysis`.
-2. Enter a stock symbol such as `AAPL`.
-3. Choose `Market`, `Time Horizon`, `Analysis Depth`, `LLM Provider`, `Model`, and optional research focus.
-4. Click `Run Analysis`.
-5. Monitor the execution trace as the current runtime graph runs:
-   `data_collector -> technical/news -> bull/bear -> risk -> thesis -> report_writer`
-6. Open the persisted report once the run reaches `completed`.
+| Provider | Status | Notes |
+| --- | --- | --- |
+| OpenAI | Supported | Full runtime support, settings persistence, and credential testing |
+| Claude | Supported | Full runtime support, settings persistence, and credential testing |
+| Gemini | Supported | Full runtime support, settings persistence, and credential testing |
+| Ollama | Partial | Settings are stored in the UI, but active local runtime support is not implemented yet |
 
-Important API surfaces behind the UI:
+### Data Sources
 
-- `GET /api/settings`
-- `POST /api/providers/llm/test`
-- `POST /api/analysis/run`
-- `GET /api/analysis/{run_id}`
-- `GET /api/analysis/{run_id}/events`
-- `WS /ws/analysis/{run_id}`
-- `GET /api/reports`
-- `GET /api/performance`
+OpenAlpha already ships with multiple built-in provider surfaces for market data and news aggregation, including:
 
-Architecture details: [docs/architecture.md](/C:/Users/ernos/OpenAlpha/docs/architecture.md)
+- Market data: `stooq`, `yahoo`, `yfinance`, `sec_edgar`, `user_api`
+- News: `gdelt`, `rss`, `yahoo_finance_rss`, `sec_edgar_news`
 
-## Example Persisted Report Shape
+See [providers.md](docs/providers.md) for the current implementation details and limitations.
 
-OpenAlpha stores final reports as JSON in `reports.report_json` inside `openalpha.db`. The stored shape matches the `FinalReport` schema used by the backend and UI. The example below shows the real persisted field layout used by the app.
+## Limitations
 
-```json
-{
-  "title": "Equity Research Report: AAPL",
-  "symbol": "AAPL",
-  "company_name": "Apple Inc.",
-  "market": "US",
-  "created_at": "2026-06-20T12:00:00Z",
-  "overall_view": "neutral",
-  "confidence": 0.64,
-  "horizon": "3m",
-  "executive_summary": "Apple remains resilient, but near-term execution risk matters.",
-  "investment_thesis": "The business remains strong, with earnings risk as the main near-term variable.",
-  "base_case": "Base case assumes stable services growth and manageable hardware softness.",
-  "bull_case_summary": "New product momentum and margins improve faster than expected.",
-  "bear_case_summary": "Demand weakness and margin pressure weigh on the next few quarters.",
-  "what_to_watch": [
-    "Next earnings release",
-    "iPhone demand indicators"
-  ],
-  "risk_section": {
-    "risk_level": "high",
-    "risk_score": 68,
-    "main_risks": [
-      "Earnings miss",
-      "Margin compression"
-    ],
-    "invalidation_conditions": [
-      "Revenue growth re-accelerates"
-    ],
-    "confidence_adjustment": -0.12
-  },
-  "data_quality_section": {
-    "data_quality_score": 0.64,
-    "price_data_status": "available",
-    "news_data_status": "partial",
-    "company_profile_status": "available",
-    "missing_data": [
-      "full fundamentals"
-    ],
-    "providers": [
-      "yahoo",
-      "gdelt"
-    ],
-    "warnings": [
-      "News coverage is partial."
-    ]
-  },
-  "source_section": [
-    {
-      "name": "Price History",
-      "type": "price",
-      "provider": "yahoo",
-      "url": "https://example.com/prices",
-      "used_for": "Technical context"
-    }
-  ],
-  "cost_breakdown": {
-    "total_estimated_cost_usd": 0.028,
-    "items": [
-      {
-        "agent_name": "thesis_agent",
-        "provider": "openai",
-        "model": "gpt-4.1-mini",
-        "input_tokens": 120,
-        "output_tokens": 80,
-        "estimated_cost_usd": 0.028
-      }
-    ]
-  },
-  "disclaimer": "This report is generated by an AI system for research and educational purposes only. It is not personalized financial advice, investment advice, or a recommendation to buy or sell any security. Always conduct your own research and consider consulting a licensed financial professional before making investment decisions."
-}
-```
+- OpenAlpha is an MVP research workstation, not a brokerage, execution engine, or portfolio manager.
+- It is not a real-time institutional market terminal.
+- Ollama/local runtime support is not active yet, even though the settings UI exposes local configuration fields.
+- The repo also contains aspirational design notes in [agent.md](agent.md); the source of truth for the shipped implementation is the code and the docs linked below.
 
-Related docs:
+## Documentation
 
-- [docs/agents.md](/C:/Users/ernos/OpenAlpha/docs/agents.md)
-- [docs/providers.md](/C:/Users/ernos/OpenAlpha/docs/providers.md)
-- [docs/architecture.md](/C:/Users/ernos/OpenAlpha/docs/architecture.md)
-
-## Disclaimer
-
-OpenAlpha is an equity research tool, not a financial advisor. Generated reports are for research and educational purposes only. They are not personalized financial advice, investment advice, or a recommendation to buy or sell any security.
+- [Installation Guide](docs/installation-guide.md)
+- [Architecture](docs/architecture.md)
+- [Agents](docs/agents.md)
+- [Providers](docs/providers.md)
+- [Adding a New Agent](docs/adding-a-new-agent.md)
+- [Adding a New Provider](docs/adding-a-new-provider.md)
 
 ## Contributing
 
-Entry points:
+- [Contributing Guide](CONTRIBUTING.md)
+- [Roadmap](ROADMAP.md)
 
-- [CONTRIBUTING.md](/C:/Users/ernos/OpenAlpha/CONTRIBUTING.md)
-- [ROADMAP.md](/C:/Users/ernos/OpenAlpha/ROADMAP.md)
-- [docs/installation-guide.md](/C:/Users/ernos/OpenAlpha/docs/installation-guide.md)
-- [docs/architecture.md](/C:/Users/ernos/OpenAlpha/docs/architecture.md)
-- [docs/agents.md](/C:/Users/ernos/OpenAlpha/docs/agents.md)
-- [docs/providers.md](/C:/Users/ernos/OpenAlpha/docs/providers.md)
-- [docs/adding-a-new-agent.md](/C:/Users/ernos/OpenAlpha/docs/adding-a-new-agent.md)
-- [docs/adding-a-new-provider.md](/C:/Users/ernos/OpenAlpha/docs/adding-a-new-provider.md)
+## Disclaimer
+
+OpenAlpha is an equity research tool for research and educational purposes only. It is not personalized financial advice, investment advice, or a recommendation to buy or sell any security.

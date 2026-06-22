@@ -88,15 +88,16 @@ Typical first-run flow:
 
 1. Start the app.
 2. Open `Settings`.
-3. Add an OpenAI API key.
+3. Add an API key for OpenAI, Claude, or Gemini.
 4. Click `Apply Settings`.
-5. Click `Test OpenAI`.
+5. Click the matching provider test action.
 6. Return to `Analysis` and run a report.
 
 Current behavior:
 
-- OpenAI is the only implemented LLM runtime for the active agents.
-- Ollama settings are stored and shown in the UI, but live Ollama testing is not implemented and the agent factories still reject non-OpenAI provider names.
+- OpenAI, Claude, and Gemini are implemented LLM runtimes for the active agents.
+- Each remote provider can be configured and credential-tested from `Settings`.
+- Ollama settings are stored and shown in the UI, but live Ollama testing is not implemented and the active agent factories still reject the local runtime.
 
 ## Troubleshooting
 
@@ -147,12 +148,20 @@ Check:
 - outbound network access to `https://api.openai.com`
 - the selected model is a real OpenAI model your account can access
 
+### Claude Or Gemini Provider Test Fails
+
+Check:
+
+- the API key is present in `Settings`
+- outbound network access to the provider API
+- the selected model is a real model your account can access
+
 ### Ollama Looks Configured But Analysis Still Fails
 
-That is expected in the current codebase. The settings UI supports local runtime fields, but the runtime agent provider factories currently support `OpenAI` only.
+That is expected in the current codebase. The settings UI supports local runtime fields, but the active runtime only supports the remote providers `OpenAI`, `Claude`, and `Gemini`.
 
 ## Next Docs
 
-- [README.md](/C:/Users/ernos/OpenAlpha/README.md)
-- [docs/architecture.md](/C:/Users/ernos/OpenAlpha/docs/architecture.md)
-- [docs/providers.md](/C:/Users/ernos/OpenAlpha/docs/providers.md)
+- [README.md](../README.md)
+- [docs/architecture.md](architecture.md)
+- [docs/providers.md](providers.md)

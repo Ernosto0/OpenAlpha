@@ -156,14 +156,16 @@ If websocket delivery is interrupted, the frontend falls back to continued polli
 
 Current state:
 
-- the UI exposes `OpenAI` and `Ollama`
-- settings persistence supports both `openai` and `local`
-- provider testing is implemented for OpenAI only
-- active agent provider factories instantiate `OpenAIProvider` only
+- the UI exposes `OpenAI`, `Claude`, `Gemini`, and `Ollama`
+- settings persistence supports all four provider names
+- provider credential testing is implemented for `OpenAI`, `Claude`, and `Gemini`
+- active agent provider factories instantiate `OpenAIProvider`, `AnthropicProvider`, and `GeminiProvider`
 
 Result:
 
 - OpenAI-backed runs are supported
+- Claude-backed runs are supported
+- Gemini-backed runs are supported
 - Ollama/local is currently a partial/planned surface, not a working runtime path
 
 ## Performance Evaluation Model
@@ -180,7 +182,7 @@ Current behavior:
 
 ## See Also
 
-- [docs/agents.md](/C:/Users/ernos/OpenAlpha/docs/agents.md)
-- [docs/providers.md](/C:/Users/ernos/OpenAlpha/docs/providers.md)
-- [docs/adding-a-new-agent.md](/C:/Users/ernos/OpenAlpha/docs/adding-a-new-agent.md)
-- [docs/adding-a-new-provider.md](/C:/Users/ernos/OpenAlpha/docs/adding-a-new-provider.md)
+- [docs/agents.md](agents.md)
+- [docs/providers.md](providers.md)
+- [docs/adding-a-new-agent.md](adding-a-new-agent.md)
+- [docs/adding-a-new-provider.md](adding-a-new-provider.md)
