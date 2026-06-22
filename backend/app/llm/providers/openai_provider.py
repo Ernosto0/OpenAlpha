@@ -214,12 +214,38 @@ class OpenAIProvider(BaseLLMProvider):
                 "format": {
                     "type": "json_schema",
                     "name": output_schema.__name__,
-                    "schema": output_schema.model_json_schema(),
+                    "schema": self._build_strict_json_schema(output_schema),
                     "strict": True,
                 }
             }
 
         return payload
+
+    def _build_strict_json_schema(
+        self,
+        output_schema: type[BaseModel],
+    ) -> dict[str, Any]:
+        schema = output_schema.model_json_schema()
+        return self._normalize_schema_node(schema)
+
+    def _normalize_schema_node(self, node: Any) -> Any:
+        if isinstance(node, list):
+            return [self._normalize_schema_node(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        normalized = {
+            key: self._normalize_schema_node(value)
+            for key, value in node.items()
+            if key != "default"
+        }
+
+        properties = normalized.get("properties")
+        if isinstance(properties, dict):
+            normalized["required"] = list(properties.keys())
+            normalized.setdefault("additionalProperties", False)
+
+        return normalized
 
     async def _request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         headers = {
@@ -271,9 +297,16 @@ class OpenAIProvider(BaseLLMProvider):
                 response_body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
+            error_message = self._error_message(error_body)
+            retryable = exc.code in {408, 409, 429, 500, 502, 503, 504}
+            if exc.code in {401, 403} or (
+                exc.code == 429 and self._is_fatal_auth_or_quota_error(error_message)
+            ):
+                retryable = False
             raise LLMProviderError(
-                f"OpenAI API returned HTTP {exc.code}: {self._error_message(error_body)}",
-                retryable=exc.code in {408, 409, 429, 500, 502, 503, 504},
+                f"OpenAI API returned HTTP {exc.code}: {error_message}",
+                retryable=retryable,
+                status_code=exc.code,
             ) from exc
         except urllib.error.URLError as exc:
             raise LLMProviderError(
@@ -366,3 +399,19 @@ class OpenAIProvider(BaseLLMProvider):
                 if isinstance(message, str) and message.strip():
                     return message.strip()
         return error_body.strip() or "No error body returned."
+
+    def _is_fatal_auth_or_quota_error(self, message: str) -> bool:
+        normalized = message.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "quota exceeded",
+                "exceeded your current quota",
+                "api key is missing",
+                "invalid api key",
+                "unauthorized",
+                "forbidden",
+                "authentication failed",
+                "invalid authentication",
+            )
+        )

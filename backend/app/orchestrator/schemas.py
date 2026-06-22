@@ -467,6 +467,7 @@ class AgentResult(OpenAlphaSchema):
     warnings: list[str] = Field(default_factory=list)
     parsing_errors: list[str] = Field(default_factory=list)
     error_message: str | None = None
+    fatal_error: bool = False
 
     @model_validator(mode="after")
     def validate_finished_at(self) -> "AgentResult":

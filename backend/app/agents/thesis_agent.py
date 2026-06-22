@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
@@ -233,17 +233,37 @@ class ThesisAgent(BaseAgent[ThesisAgentOutput]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": THESIS_AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": self.build_user_prompt(context)},
-            ],
-            output_schema=ThesisAgentOutput,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": THESIS_AGENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.build_user_prompt(context)},
+                ],
+                output_schema=ThesisAgentOutput,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_output_for_llm_failure(context, str(exc))
+            context.thesis_output = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=self._data_used(context),
+                warnings=self._dedupe(
+                    [
+                        "Thesis generation used a deterministic fallback because the LLM request failed.",
+                        f"LLM error: {exc}",
+                        *self._input_warnings(context),
+                    ]
+                ),
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, ThesisAgentOutput):
@@ -263,6 +283,42 @@ class ThesisAgent(BaseAgent[ThesisAgentOutput]):
             data_used=self._data_used(context),
             warnings=warnings,
             parsing_errors=result.parsing_errors,
+        )
+
+    def _fallback_output_for_llm_failure(
+        self,
+        context: AnalysisContext,
+        error_message: str,
+    ) -> ThesisAgentOutput:
+        return ThesisAgentOutput(
+            overall_view="insufficient_data",
+            confidence=0.1,
+            horizon=context.request.horizon,
+            thesis=(
+                "The final AI research thesis could not be fully generated because "
+                "the configured LLM provider request failed. Available upstream data "
+                "and agent outputs may still offer partial context, but the final "
+                "synthesis should be treated as incomplete."
+            ),
+            base_case=(
+                "A cautious base case is more appropriate until the LLM-backed thesis "
+                "synthesis step can be rerun successfully."
+            ),
+            bull_case_summary=(
+                context.bull_case_output.bull_case
+                if context.bull_case_output is not None
+                else "No reliable bull case summary is available."
+            ),
+            bear_case_summary=(
+                context.bear_case_output.bear_case
+                if context.bear_case_output is not None
+                else "No reliable bear case summary is available."
+            ),
+            what_to_watch=[
+                "Whether LLM access is restored so the final thesis can be regenerated.",
+                "Whether upstream technical, news, and risk outputs remain available and current.",
+                f"Whether the LLM error is resolved: {error_message}",
+            ],
         )
 
     def build_user_prompt(self, context: AnalysisContext) -> str:

@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from backend.app.agents.technical_agent import TechnicalAgent
-from backend.app.llm import LLMMessage, LLMResult
+from backend.app.llm import LLMMessage, LLMProviderError, LLMResult
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     AnalysisRequest,
@@ -83,6 +84,26 @@ class FakeLLMProvider:
             output_tokens=45,
             estimated_cost_usd=0.002,
             warnings=["No pricing configured for fake/fake-model."],
+        )
+
+
+class FailingLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 400: invalid response format",
+            retryable=True,
+        )
+
+
+class FatalLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 429: quota exceeded",
+            status_code=429,
         )
 
 
@@ -171,3 +192,41 @@ def test_technical_agent_returns_partial_output_when_indicators_are_missing() ->
     assert context.technical_output.view == "insufficient_data"
     assert context.technical_output.confidence == 0
     assert result.warnings == ["Technical indicators are missing from context."]
+
+
+def test_technical_agent_returns_partial_output_when_llm_fails() -> None:
+    indicators = IndicatorBundle(
+        symbol="AAPL",
+        horizon="1m",
+        moving_averages={"20": 101.0},
+    )
+    context = make_context(indicators=indicators)
+    context.market_data = MarketDataBundle(
+        symbol="AAPL",
+        market="US",
+        price_history=[PriceBar(timestamp="2026-06-20T00:00:00Z", close=104.1)],
+    )
+
+    result = asyncio.run(TechnicalAgent(llm_provider=FailingLLMProvider()).run(context))
+
+    assert result.status == "partial"
+    assert result.provider == "local"
+    assert context.technical_output is not None
+    assert context.technical_output.view == "insufficient_data"
+    assert any("LLM request failed" in warning for warning in result.warnings)
+
+
+def test_technical_agent_stops_when_quota_is_exceeded() -> None:
+    indicators = IndicatorBundle(
+        symbol="AAPL",
+        horizon="1m",
+        moving_averages={"20": 101.0},
+    )
+    context = make_context(indicators=indicators)
+
+    result = asyncio.run(TechnicalAgent(llm_provider=FatalLLMProvider()).run(context))
+
+    assert result.status == "failed"
+    assert result.fatal_error is True
+    assert "quota exceeded" in (result.error_message or "")
+    assert context.latest_agent_result("technical_agent") == result

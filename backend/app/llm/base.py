@@ -19,9 +19,16 @@ def utc_now() -> datetime:
 
 
 class LLMProviderError(Exception):
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.status_code = status_code
 
 
 class LLMConfigurationError(LLMProviderError):
@@ -222,3 +229,25 @@ class BaseLLMProvider(ABC):
         if last_error is not None:
             raise last_error
         raise LLMProviderError("LLM operation failed without an error")
+
+
+def should_stop_analysis_for_llm_error(exc: LLMProviderError) -> bool:
+    if isinstance(exc, LLMConfigurationError):
+        return True
+
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {401, 403, 429}:
+        return True
+
+    message = str(exc).lower()
+    fatal_markers = (
+        "quota exceeded",
+        "exceeded your current quota",
+        "api key is missing",
+        "invalid api key",
+        "unauthorized",
+        "forbidden",
+        "authentication failed",
+        "invalid authentication",
+    )
+    return any(marker in message for marker in fatal_markers)

@@ -1,6 +1,6 @@
 import { CheckCircle2, CircleDashed, Loader2, AlertTriangle, XCircle } from "lucide-react";
 
-export type AgentStatus = "pending" | "running" | "completed" | "failed" | "warning";
+export type AgentStatus = "pending" | "running" | "completed" | "partial" | "failed";
 
 export type AgentRun = {
   id: string;
@@ -21,10 +21,10 @@ export function AgentTimeline({ agents }: { agents: AgentRun[] }) {
         return <Loader2 className="h-4 w-4 text-info animate-spin" />;
       case "completed":
         return <CheckCircle2 className="h-4 w-4 text-success" />;
+      case "partial":
+        return <AlertTriangle className="h-4 w-4 text-warning" />;
       case "failed":
         return <XCircle className="h-4 w-4 text-destructive" />;
-      case "warning":
-        return <AlertTriangle className="h-4 w-4 text-warning" />;
     }
   };
 
@@ -44,6 +44,10 @@ export function AgentTimeline({ agents }: { agents: AgentRun[] }) {
               {agent.duration && (
                 <span className="text-xs text-muted-foreground font-mono">{agent.duration}</span>
               )}
+            </div>
+
+            <div className="mt-2 text-xs font-mono uppercase tracking-wide text-muted-foreground">
+              {agent.status}
             </div>
             
             {(agent.provider || agent.cost) && (

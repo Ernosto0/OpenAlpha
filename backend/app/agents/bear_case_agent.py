@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
@@ -156,17 +156,35 @@ class BearCaseAgent(BaseAgent[BearCaseAgentOutput]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": BEAR_CASE_AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": self.build_user_prompt(context)},
-            ],
-            output_schema=BearCaseAgentOutput,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": BEAR_CASE_AGENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.build_user_prompt(context)},
+                ],
+                output_schema=BearCaseAgentOutput,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_output_for_llm_failure(context, str(exc))
+            context.bear_case_output = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=self._data_used(context),
+                warnings=self._dedupe(
+                    [
+                        f"Bear case used a deterministic fallback because the LLM request failed: {exc}"
+                    ]
+                ),
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, BearCaseAgentOutput):
@@ -191,6 +209,28 @@ class BearCaseAgent(BaseAgent[BearCaseAgentOutput]):
             data_used=self._data_used(context),
             warnings=warnings,
             parsing_errors=result.parsing_errors,
+        )
+
+    def _fallback_output_for_llm_failure(
+        self,
+        context: AnalysisContext,
+        error_message: str,
+    ) -> BearCaseAgentOutput:
+        return BearCaseAgentOutput(
+            bear_case=(
+                "A full AI-generated bear case could not be produced because the "
+                "configured LLM provider request failed. Any downside view should be "
+                "treated as incomplete and conditional on restoring LLM access."
+            ),
+            main_risks=[
+                "Technical and/or news inputs may still contain downside signals, but they were not synthesized by the Bear Case Agent.",
+                "The current downside case is incomplete because the LLM-backed reasoning step failed.",
+                f"LLM error: {error_message}",
+            ],
+            downside_conditions=[
+                "LLM access is restored so the collected technical and news inputs can be synthesized.",
+                "Upstream technical and sentiment outputs remain available and internally consistent.",
+            ],
         )
 
     def build_user_prompt(self, context: AnalysisContext) -> str:

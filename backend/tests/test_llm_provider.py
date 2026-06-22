@@ -9,7 +9,11 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.core.secrets import get_provider_api_key
-from backend.app.llm import LLMConfigurationError, LLMProviderError
+from backend.app.llm import (
+    LLMConfigurationError,
+    LLMProviderError,
+    should_stop_analysis_for_llm_error,
+)
 from backend.app.llm.providers import OpenAIProvider
 
 
@@ -18,6 +22,22 @@ class ExampleOutput(BaseModel):
 
     rating: str = Field(min_length=1)
     score: float = Field(ge=0, le=1)
+
+
+class ExampleNestedItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    note: str | None = None
+
+
+class ExampleOptionalOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rating: str = Field(min_length=1)
+    score: float = Field(ge=0, le=1)
+    note: str | None = None
+    items: list[ExampleNestedItem] = Field(default_factory=list)
 
 
 def write_secrets(path: Path, payload: dict[str, Any]) -> Path:
@@ -140,6 +160,41 @@ def test_openai_generate_json_retries_retryable_errors() -> None:
     assert result.content.score == 0.7
 
 
+def test_openai_generate_json_normalizes_optional_fields_for_strict_schema() -> None:
+    calls: list[dict[str, Any]] = []
+
+    def transport(
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        calls.append(payload)
+        return response_with_text(
+            '{"rating": "ok", "score": 0.7, "note": null, "items": []}'
+        )
+
+    provider = OpenAIProvider(
+        api_key="test-key",
+        default_model="gpt-4.1-mini",
+        transport=transport,
+    )
+
+    asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "Analyze AMZN."}],
+            output_schema=ExampleOptionalOutput,
+        )
+    )
+
+    schema = calls[0]["text"]["format"]["schema"]
+    assert schema["required"] == ["rating", "score", "note", "items"]
+    assert "default" not in schema["properties"]["note"]
+    nested = schema["$defs"]["ExampleNestedItem"]
+    assert nested["required"] == ["title", "note"]
+    assert "default" not in nested["properties"]["note"]
+
+
 def test_openai_generate_json_reports_validation_errors() -> None:
     provider = OpenAIProvider(
         api_key="test-key",
@@ -173,3 +228,15 @@ def test_openai_requires_api_key_before_request(monkeypatch: pytest.MonkeyPatch)
                 messages=[{"role": "user", "content": "Hello"}],
             )
         )
+
+
+def test_quota_and_auth_errors_stop_analysis() -> None:
+    assert should_stop_analysis_for_llm_error(
+        LLMProviderError("OpenAI API returned HTTP 429: quota exceeded", status_code=429)
+    )
+    assert should_stop_analysis_for_llm_error(
+        LLMProviderError("OpenAI API returned HTTP 401: unauthorized", status_code=401)
+    )
+    assert not should_stop_analysis_for_llm_error(
+        LLMProviderError("OpenAI API returned HTTP 400: invalid response format")
+    )

@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from backend.app.agents.bear_case_agent import BearCaseAgent
-from backend.app.llm import LLMMessage, LLMResult
+from backend.app.llm import LLMMessage, LLMProviderError, LLMResult
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     AnalysisRequest,
@@ -75,6 +76,16 @@ class FakeLLMProvider:
             output_tokens=50,
             estimated_cost_usd=0.0025,
             warnings=["No pricing configured for fake/fake-model."],
+        )
+
+
+class FailingLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 400: invalid response format",
+            retryable=True,
         )
 
 
@@ -161,3 +172,58 @@ def test_bear_case_agent_returns_partial_output_when_inputs_are_missing() -> Non
     assert result.warnings == [
         "Bear case was generated without upstream inputs because technical and news outputs are missing."
     ]
+
+
+def test_bear_case_agent_returns_partial_output_when_llm_fails() -> None:
+    context = make_context(
+        technical_output=TechnicalAgentOutput(
+            view="slightly_bearish",
+            confidence=0.61,
+            summary="Momentum is soft and the trend has weakened near resistance.",
+        ),
+        news_output=NewsSentimentOutput(
+            view="slightly_bearish",
+            confidence=0.58,
+            sentiment_summary="Recent coverage carries some negative company-specific pressure.",
+            important_news=[],
+        ),
+    )
+
+    result = asyncio.run(BearCaseAgent(llm_provider=FailingLLMProvider()).run(context))
+
+    assert result.status == "partial"
+    assert result.provider == "local"
+    assert context.bear_case_output is not None
+    assert any("LLM request failed" in warning for warning in result.warnings)
+
+
+def test_bear_case_agent_stops_when_quota_is_exceeded() -> None:
+    context = make_context(
+        technical_output=TechnicalAgentOutput(
+            view="slightly_bearish",
+            confidence=0.61,
+            summary="Momentum is soft and the trend has weakened near resistance.",
+        ),
+        news_output=NewsSentimentOutput(
+            view="slightly_bearish",
+            confidence=0.58,
+            sentiment_summary="Recent coverage carries some negative company-specific pressure.",
+            important_news=[],
+        ),
+    )
+
+    class FatalLLMProvider:
+        provider_name = "fake"
+
+        async def generate_json(self, **_kwargs: Any) -> LLMResult:
+            raise LLMProviderError(
+                "OpenAI API returned HTTP 429: quota exceeded",
+                status_code=429,
+            )
+
+    result = asyncio.run(BearCaseAgent(llm_provider=FatalLLMProvider()).run(context))
+
+    assert result.status == "failed"
+    assert result.fatal_error is True
+    assert "quota exceeded" in (result.error_message or "")
+    assert context.latest_agent_result("bear_case_agent") == result

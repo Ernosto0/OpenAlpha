@@ -2,12 +2,17 @@ import { Menu, Search } from "lucide-react";
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
 
+import { getProviderLabel } from "../../lib/analysis";
+import { useAppSettings } from "../../lib/settings-context";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Sidebar } from "./sidebar";
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { settings } = useAppSettings();
+  const providerLabel = settings ? getProviderLabel(settings.default_provider) : "Loading";
+  const modelLabel = settings?.default_model ?? "...";
 
   return (
     <div className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[260px_1fr]">
@@ -56,11 +61,11 @@ export function AppLayout() {
           <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
             <div className="hidden md:flex items-center gap-1.5">
               <span className="text-foreground">PRV:</span>
-              <span>OpenAI</span>
+              <span>{providerLabel}</span>
             </div>
             <div className="hidden md:flex items-center gap-1.5">
               <span className="text-foreground">MOD:</span>
-              <span>gpt-4o</span>
+              <span>{modelLabel}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-foreground">CST:</span>

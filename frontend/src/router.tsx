@@ -18,6 +18,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "analysis", element: <AnalysisPage /> },
+      { path: "analysis/:runId", element: <AnalysisPage /> },
       { path: "reports", element: <ReportsPage /> },
       { path: "reports/:id", element: <ReportDetailPage /> },
       { path: "performance", element: <PerformancePage /> },

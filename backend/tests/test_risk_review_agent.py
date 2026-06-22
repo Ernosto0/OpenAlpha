@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from backend.app.agents.risk_review_agent import RiskReviewAgent
-from backend.app.llm import LLMMessage, LLMResult
+from backend.app.llm import LLMMessage, LLMProviderError, LLMResult
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     AnalysisRequest,
@@ -74,6 +75,16 @@ class FakeLLMProvider:
             output_tokens=60,
             estimated_cost_usd=0.0035,
             warnings=["No pricing configured for fake/fake-model."],
+        )
+
+
+class FailingLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 400: invalid response format",
+            retryable=True,
         )
 
 
@@ -160,7 +171,7 @@ def test_risk_review_agent_calls_llm_and_saves_output_to_context() -> None:
     assert provider.calls[0]["output_schema"] is RiskReviewAgentOutput
     assert provider.calls[0]["agent_name"] == "risk_review_agent"
     assert "Review the risk profile for AAPL" in provider.calls[0]["messages"][1]["content"]
-    assert "- Company name: Apple Inc." in provider.calls[0]["messages"][1]["content"]
+    assert "* Company name: Apple Inc." in provider.calls[0]["messages"][1]["content"]
     assert '"bull_case_output": {' in provider.calls[0]["messages"][1]["content"]
     assert '"bear_case_output": {' in provider.calls[0]["messages"][1]["content"]
     assert "Focus on what could invalidate the current setup." in provider.calls[0]["messages"][1]["content"]
@@ -186,3 +197,59 @@ def test_risk_review_agent_returns_partial_output_when_inputs_are_missing() -> N
     assert result.warnings == [
         "Risk review was generated without usable upstream inputs."
     ]
+
+
+def test_risk_review_agent_returns_partial_output_when_llm_fails() -> None:
+    context = make_context(
+        technical_output=TechnicalAgentOutput(
+            view="neutral",
+            confidence=0.5,
+            summary="Mixed technical setup.",
+        ),
+        news_output=NewsSentimentOutput(
+            view="neutral",
+            confidence=0.4,
+            sentiment_summary="Mixed news.",
+            important_news=[],
+        ),
+    )
+
+    result = asyncio.run(RiskReviewAgent(llm_provider=FailingLLMProvider()).run(context))
+
+    assert result.status == "partial"
+    assert result.provider == "local"
+    assert context.risk_review_output is not None
+    assert context.risk_review_output.risk_level == "insufficient_data"
+    assert any("LLM request failed" in warning for warning in result.warnings)
+
+
+def test_risk_review_agent_stops_when_quota_is_exceeded() -> None:
+    context = make_context(
+        technical_output=TechnicalAgentOutput(
+            view="neutral",
+            confidence=0.5,
+            summary="Mixed technical setup.",
+        ),
+        news_output=NewsSentimentOutput(
+            view="neutral",
+            confidence=0.4,
+            sentiment_summary="Mixed news.",
+            important_news=[],
+        ),
+    )
+
+    class FatalLLMProvider:
+        provider_name = "fake"
+
+        async def generate_json(self, **_kwargs: Any) -> LLMResult:
+            raise LLMProviderError(
+                "OpenAI API returned HTTP 429: quota exceeded",
+                status_code=429,
+            )
+
+    result = asyncio.run(RiskReviewAgent(llm_provider=FatalLLMProvider()).run(context))
+
+    assert result.status == "failed"
+    assert result.fatal_error is True
+    assert "quota exceeded" in (result.error_message or "")
+    assert context.latest_agent_result("risk_review_agent") == result

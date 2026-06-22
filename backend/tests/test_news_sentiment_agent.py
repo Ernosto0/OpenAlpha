@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from backend.app.agents.news_sentiment_agent import NewsSentimentAgent
-from backend.app.llm import LLMMessage, LLMResult
+from backend.app.llm import LLMMessage, LLMProviderError, LLMResult
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     AnalysisRequest,
@@ -78,6 +79,16 @@ class FakeLLMProvider:
             output_tokens=55,
             estimated_cost_usd=0.003,
             warnings=["No pricing configured for fake/fake-model."],
+        )
+
+
+class FailingLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 400: invalid response format",
+            retryable=True,
         )
 
 
@@ -160,3 +171,57 @@ def test_news_sentiment_agent_returns_partial_output_when_news_is_missing() -> N
     assert result.warnings == [
         "No usable news data was provided by the configured news providers."
     ]
+
+
+def test_news_sentiment_agent_returns_partial_output_when_llm_fails() -> None:
+    context = make_context(
+        news=[
+            NewsItem(
+                title="Apple expands AI features across devices",
+                source="Example News",
+                published_at="2026-06-20T09:00:00Z",
+                summary="Apple introduced a wider AI rollout tied to its device base.",
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        NewsSentimentAgent(llm_provider=FailingLLMProvider()).run(context)
+    )
+
+    assert result.status == "partial"
+    assert result.provider == "local"
+    assert context.news_sentiment_output is not None
+    assert context.news_sentiment_output.view == "insufficient_data"
+    assert any("LLM request failed" in warning for warning in result.warnings)
+
+
+def test_news_sentiment_agent_stops_when_quota_is_exceeded() -> None:
+    context = make_context(
+        news=[
+            NewsItem(
+                title="Apple expands AI features across devices",
+                source="Example News",
+                published_at="2026-06-20T09:00:00Z",
+                summary="Apple introduced a wider AI rollout tied to its device base.",
+            )
+        ]
+    )
+
+    class FatalLLMProvider:
+        provider_name = "fake"
+
+        async def generate_json(self, **_kwargs: Any) -> LLMResult:
+            raise LLMProviderError(
+                "OpenAI API returned HTTP 429: quota exceeded",
+                status_code=429,
+            )
+
+    result = asyncio.run(
+        NewsSentimentAgent(llm_provider=FatalLLMProvider()).run(context)
+    )
+
+    assert result.status == "failed"
+    assert result.fatal_error is True
+    assert "quota exceeded" in (result.error_message or "")
+    assert context.latest_agent_result("news_sentiment_agent") == result

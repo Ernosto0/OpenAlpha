@@ -18,6 +18,7 @@ from backend.app.orchestrator.schemas import (
     OpenAlphaSchema,
     utc_now,
 )
+from backend.app.llm import LLMProviderError, should_stop_analysis_for_llm_error
 
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -39,6 +40,7 @@ class AgentExecutionPayload(OpenAlphaSchema):
     warnings: list[str] = Field(default_factory=list)
     parsing_errors: list[str] = Field(default_factory=list)
     agent_name: str | None = Field(default=None, min_length=1, max_length=64)
+    fatal_error: bool = False
 
 
 class BaseAgent(ABC, Generic[OutputT]):
@@ -104,6 +106,15 @@ class BaseAgent(ABC, Generic[OutputT]):
                 error_message=str(exc),
                 parsing_errors=[str(exc)],
             )
+        except LLMProviderError as exc:
+            result = self._failure_result(
+                started_at=started_at,
+                provider=provider,
+                model=model,
+                payload=payload,
+                error_message=str(exc),
+                fatal_error=self._should_stop_on_llm_error(exc),
+            )
         except Exception as exc:
             self.logger.exception(
                 "Agent failed",
@@ -160,6 +171,7 @@ class BaseAgent(ABC, Generic[OutputT]):
         payload: AgentExecutionPayload | None,
         error_message: str,
         parsing_errors: Sequence[str] = (),
+        fatal_error: bool = False,
     ) -> AgentResult:
         return AgentResult(
             agent_name=self.name,
@@ -176,6 +188,7 @@ class BaseAgent(ABC, Generic[OutputT]):
             parsing_errors=list(parsing_errors)
             + (payload.parsing_errors if payload else []),
             error_message=error_message,
+            fatal_error=fatal_error,
         )
 
     def _record_result(self, context: AnalysisContext, result: AgentResult) -> None:
@@ -197,3 +210,6 @@ class BaseAgent(ABC, Generic[OutputT]):
 
     def _resolve_model(self, context: AnalysisContext, model: str | None) -> str:
         return model or self.model or context.request.llm_model
+
+    def _should_stop_on_llm_error(self, exc: LLMProviderError) -> bool:
+        return should_stop_analysis_for_llm_error(exc)

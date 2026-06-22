@@ -94,6 +94,13 @@ class FailingPriceProvider(StaticPriceProvider):
         raise RuntimeError("price provider unavailable")
 
 
+class MissingPriceProvider(StaticPriceProvider):
+    provider_name = "missing_prices"
+
+    def __init__(self) -> None:
+        super().__init__(bars=[])
+
+
 class StaticFactsProvider(MarketDataProvider):
     provider_name = "static_facts"
     capabilities = ("company_profile", "financials", "company_facts")
@@ -253,3 +260,42 @@ def test_data_collector_records_zero_cost_trace() -> None:
     assert context.cost_traces[0].provider == "local"
     assert context.cost_traces[0].model == "deterministic"
     assert context.cost_traces[0].estimated_cost_usd == 0
+
+
+def test_data_collector_falls_back_to_secondary_price_provider() -> None:
+    context = make_context()
+    agent = DataCollectorAgent(
+        price_provider=FailingPriceProvider(),
+        facts_provider=StaticFactsProvider(),
+        news_service=StaticNewsService(),
+    )
+    agent.price_providers = [FailingPriceProvider(), StaticPriceProvider()]
+    agent.price_provider = agent.price_providers[0]
+
+    result = asyncio.run(agent.run(context))
+
+    assert result.status == "completed"
+    assert context.market_data is not None
+    assert len(context.market_data.price_history) == 30
+    assert any(
+        "failing_prices price history failed: price provider unavailable" in warning
+        for warning in result.warnings
+    )
+
+
+def test_data_collector_returns_last_missing_price_result_when_fallbacks_empty() -> None:
+    context = make_context()
+    agent = DataCollectorAgent(
+        price_provider=MissingPriceProvider(),
+        facts_provider=StaticFactsProvider(),
+        news_service=StaticNewsService(),
+    )
+    agent.price_providers = [MissingPriceProvider()]
+    agent.price_provider = agent.price_providers[0]
+
+    result = asyncio.run(agent.run(context))
+
+    assert result.status == "partial"
+    assert context.market_data is not None
+    assert context.market_data.price_history == []
+    assert context.market_data.sources[0].provider == "missing_prices"

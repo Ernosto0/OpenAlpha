@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from backend.app.agents.thesis_agent import ThesisAgent
-from backend.app.llm import LLMMessage, LLMResult
+from backend.app.llm import LLMMessage, LLMProviderError, LLMResult
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     AnalysisRequest,
@@ -88,6 +89,16 @@ class FakeLLMProvider:
             output_tokens=85,
             estimated_cost_usd=0.0042,
             warnings=["No pricing configured for fake/fake-model."],
+        )
+
+
+class FailingLLMProvider:
+    provider_name = "fake"
+
+    async def generate_json(self, **_kwargs: Any) -> LLMResult:
+        raise LLMProviderError(
+            "OpenAI API returned HTTP 400: invalid response format",
+            retryable=True,
         )
 
 
@@ -175,7 +186,7 @@ def test_thesis_agent_calls_llm_and_saves_output_to_context() -> None:
     assert provider.calls[0]["output_schema"] is ThesisAgentOutput
     assert provider.calls[0]["agent_name"] == "thesis_agent"
     assert "Create a final AI research thesis for AAPL" in provider.calls[0]["messages"][1]["content"]
-    assert "- Company name: Apple Inc." in provider.calls[0]["messages"][1]["content"]
+    assert "* Company name: Apple Inc." in provider.calls[0]["messages"][1]["content"]
     assert '"risk_review_output": {' in provider.calls[0]["messages"][1]["content"]
     assert '"technical_output": {' in provider.calls[0]["messages"][1]["content"]
     assert "Focus on whether the balanced case is improving or weakening." in provider.calls[0]["messages"][1]["content"]
@@ -202,3 +213,35 @@ def test_thesis_agent_returns_partial_output_when_inputs_are_missing() -> None:
         "No reliable base case can be formed from the provided data."
     )
     assert result.warnings == ["Thesis was generated without usable upstream inputs."]
+
+
+def test_thesis_agent_returns_partial_output_when_llm_fails() -> None:
+    context = make_context(include_upstream_outputs=True)
+
+    result = asyncio.run(ThesisAgent(llm_provider=FailingLLMProvider()).run(context))
+
+    assert result.status == "partial"
+    assert result.provider == "local"
+    assert context.thesis_output is not None
+    assert context.thesis_output.overall_view == "insufficient_data"
+    assert any("LLM request failed" in warning for warning in result.warnings)
+
+
+def test_thesis_agent_stops_when_quota_is_exceeded() -> None:
+    context = make_context(include_upstream_outputs=True)
+
+    class FatalLLMProvider:
+        provider_name = "fake"
+
+        async def generate_json(self, **_kwargs: Any) -> LLMResult:
+            raise LLMProviderError(
+                "OpenAI API returned HTTP 429: quota exceeded",
+                status_code=429,
+            )
+
+    result = asyncio.run(ThesisAgent(llm_provider=FatalLLMProvider()).run(context))
+
+    assert result.status == "failed"
+    assert result.fatal_error is True
+    assert "quota exceeded" in (result.error_message or "")
+    assert context.latest_agent_result("thesis_agent") == result

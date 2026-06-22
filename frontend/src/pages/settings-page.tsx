@@ -1,7 +1,8 @@
-import { Save, Lock, Database, Cpu, HardDrive } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { LoaderCircle, Lock, Save, Server, TestTube2 } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { PageHeader } from "../components/page-header";
+import { StatusBadge } from "../components/shared/status-badges";
 import { Button } from "../components/ui/button";
 import {
   Card,
@@ -13,183 +14,422 @@ import {
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
-import { StatusBadge } from "../components/shared/status-badges";
+import { getModelsForProvider, getProviderLabel } from "../lib/analysis";
+import {
+  api,
+  type AppSettingsUpdate,
+  type ProviderStatus,
+} from "../lib/api";
+import { useAppSettings } from "../lib/settings-context";
+
+type SettingsFormState = {
+  openaiApiKey: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  defaultProvider: "openai" | "local";
+  defaultModel: string;
+};
+
+const EMPTY_FORM: SettingsFormState = {
+  openaiApiKey: "",
+  ollamaBaseUrl: "http://localhost:11434",
+  ollamaModel: "llama3",
+  defaultProvider: "openai",
+  defaultModel: "gpt-4.1-mini",
+};
 
 export function SettingsPage() {
-  const [saved, setSaved] = useState(false);
+  const { settings, isLoading, error, applySettings, refresh } = useAppSettings();
+  const [formState, setFormState] = useState<SettingsFormState>(EMPTY_FORM);
+  const [saveState, setSaveState] = useState<{
+    status: "idle" | "saving" | "saved" | "error";
+    message: string | null;
+  }>({ status: "idle", message: null });
+  const [testingProvider, setTestingProvider] = useState<"openai" | "local" | null>(null);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+  useEffect(() => {
+    if (!settings) {
+      return;
+    }
+
+    setFormState({
+      openaiApiKey: "",
+      ollamaBaseUrl: settings.providers.local.base_url,
+      ollamaModel: settings.providers.local.model,
+      defaultProvider: settings.default_provider,
+      defaultModel: settings.default_model,
+    });
+  }, [settings]);
+
+  const modelOptions = useMemo(() => {
+    const knownOptions = getModelsForProvider(formState.defaultProvider);
+    if (knownOptions.some((option) => option.value === formState.defaultModel)) {
+      return knownOptions;
+    }
+
+    return [
+      { value: formState.defaultModel, label: `${formState.defaultModel} (saved)` },
+      ...knownOptions,
+    ];
+  }, [formState.defaultModel, formState.defaultProvider]);
+
+  function updateField<K extends keyof SettingsFormState>(
+    field: K,
+    value: SettingsFormState[K],
+  ) {
+    setFormState((current) => ({
+      ...current,
+      [field]: value,
+    }));
   }
+
+  function handleProviderChange(provider: "openai" | "local") {
+    const nextDefaultModel =
+      provider === "local" ? formState.ollamaModel : getModelsForProvider(provider)[0]?.value ?? "gpt-4.1-mini";
+
+    setFormState((current) => ({
+      ...current,
+      defaultProvider: provider,
+      defaultModel: nextDefaultModel,
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaveState({ status: "saving", message: null });
+
+    const payload: AppSettingsUpdate = {
+      default_provider: formState.defaultProvider,
+      default_model:
+        formState.defaultProvider === "local"
+          ? formState.ollamaModel.trim()
+          : formState.defaultModel.trim(),
+      openai_api_key: formState.openaiApiKey.trim() || null,
+      ollama_base_url: formState.ollamaBaseUrl.trim(),
+      ollama_model: formState.ollamaModel.trim(),
+    };
+
+    try {
+      const response = await api.saveSettings(payload);
+      applySettings(response);
+      setFormState((current) => ({
+        ...current,
+        openaiApiKey: "",
+        defaultModel: response.default_model,
+      }));
+      setSaveState({
+        status: "saved",
+        message: "Configuration updated successfully.",
+      });
+    } catch {
+      setSaveState({
+        status: "error",
+        message: "Unable to save settings.",
+      });
+    }
+  }
+
+  async function handleProviderTest(provider: "openai" | "local") {
+    setTestingProvider(provider);
+    setSaveState({ status: "idle", message: null });
+    try {
+      await api.testProvider(provider);
+      await refresh();
+    } catch {
+      setSaveState({
+        status: "error",
+        message: `Unable to test ${getProviderLabel(provider)}.`,
+      });
+    } finally {
+      setTestingProvider(null);
+    }
+  }
+
+  const openaiSettings = settings?.providers.openai;
+  const localSettings = settings?.providers.local;
 
   return (
     <>
       <PageHeader
         eyebrow="Settings"
         title="Environment Configuration"
-        description="Manage local-first trust, provider credentials, and system parameters."
+        description="Manage local provider credentials, runtime defaults, and connectivity state."
       />
 
       <form className="grid gap-6 lg:grid-cols-2" onSubmit={handleSubmit}>
-        
-        {/* API Keys / Secrets */}
-        <Card className="bg-card shadow-panel border-border">
-          <CardHeader className="border-b border-border pb-4 bg-muted/10">
-            <div className="flex justify-between items-center">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Lock className="h-4 w-4" />
-                API Keys & Secrets
-              </CardTitle>
-            </div>
-            <CardDescription>Credentials are encrypted and stored locally in your SQLite DB.</CardDescription>
+        <Card className="border-border bg-card shadow-panel">
+          <CardHeader className="border-b border-border bg-muted/10 pb-4">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Lock className="h-4 w-4" />
+              Provider Credentials
+            </CardTitle>
+            <CardDescription>Credentials are persisted locally through the backend.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-6 space-y-4">
+          <CardContent className="space-y-5 pt-6">
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <Label htmlFor="openai-key">OpenAI API Key</Label>
-                <StatusBadge status="Connected" variant="success" />
+                <StatusBadge
+                  status={statusLabel(openaiSettings?.status ?? "missing")}
+                  variant={statusVariant(openaiSettings?.status ?? "missing")}
+                />
               </div>
               <Input
                 id="openai-key"
                 name="openai-key"
-                defaultValue="sk-..."
+                placeholder={
+                  openaiSettings?.api_key_masked
+                    ? `Saved: ${openaiSettings.api_key_masked}`
+                    : "sk-..."
+                }
                 type="password"
                 className="font-mono"
+                value={formState.openaiApiKey}
+                onChange={(event) => updateField("openaiApiKey", event.target.value)}
               />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="anthropic-key">Anthropic API Key</Label>
-                <StatusBadge status="Missing key" variant="warning" />
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>
+                  {openaiSettings?.api_key_configured
+                    ? `Stored locally as ${openaiSettings.api_key_masked}. Leave blank to keep it.`
+                    : "No OpenAI key stored yet."}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="font-mono"
+                  disabled={testingProvider === "openai"}
+                  onClick={() => void handleProviderTest("openai")}
+                >
+                  {testingProvider === "openai" ? (
+                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <TestTube2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  )}
+                  Test OpenAI
+                </Button>
               </div>
-              <Input
-                id="anthropic-key"
-                name="anthropic-key"
-                placeholder="sk-ant-..."
-                type="password"
-                className="font-mono"
-              />
+              {openaiSettings?.last_test_message ? (
+                <p className="text-xs text-muted-foreground">{openaiSettings.last_test_message}</p>
+              ) : null}
             </div>
           </CardContent>
         </Card>
 
-        {/* Model Defaults */}
-        <Card className="bg-card shadow-panel border-border">
-          <CardHeader className="border-b border-border pb-4 bg-muted/10">
+        <Card className="border-border bg-card shadow-panel">
+          <CardHeader className="border-b border-border bg-muted/10 pb-4">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Cpu className="h-4 w-4" />
-              LLM Providers & Defaults
+              <Server className="h-4 w-4" />
+              Ollama Runtime
             </CardTitle>
-            <CardDescription>Configure routing for analysis and reporting agents.</CardDescription>
+            <CardDescription>Base URL and default model for the local provider path.</CardDescription>
           </CardHeader>
-          <CardContent className="pt-6 space-y-4">
+          <CardContent className="space-y-5 pt-6">
             <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="default-provider">Default Provider</Label>
-                <StatusBadge status="Active" variant="success" />
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="ollama-base-url">Ollama Base URL</Label>
+                <StatusBadge
+                  status={statusLabel(localSettings?.status ?? "untested")}
+                  variant={statusVariant(localSettings?.status ?? "untested")}
+                />
               </div>
-              <Select id="default-provider" name="default-provider" defaultValue="openai">
+              <Input
+                id="ollama-base-url"
+                name="ollama-base-url"
+                className="font-mono"
+                value={formState.ollamaBaseUrl}
+                onChange={(event) => updateField("ollamaBaseUrl", event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ollama-model">Ollama Model</Label>
+              <Input
+                id="ollama-model"
+                name="ollama-model"
+                className="font-mono"
+                value={formState.ollamaModel}
+                onChange={(event) => {
+                  const nextModel = event.target.value;
+                  setFormState((current) => ({
+                    ...current,
+                    ollamaModel: nextModel,
+                    defaultModel:
+                      current.defaultProvider === "local" ? nextModel : current.defaultModel,
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                {localSettings?.last_test_message ??
+                  "Live Ollama connectivity test is not implemented in this version."}
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                className="font-mono"
+                disabled={testingProvider === "local"}
+                onClick={() => void handleProviderTest("local")}
+              >
+                {testingProvider === "local" ? (
+                  <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <TestTube2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                )}
+                Test Ollama
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card shadow-panel">
+          <CardHeader className="border-b border-border bg-muted/10 pb-4">
+            <CardTitle className="text-base">Default Runtime</CardTitle>
+            <CardDescription>These defaults are used across the dashboard and analysis forms.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-6">
+            <div className="space-y-2">
+              <Label htmlFor="default-provider">Default Provider</Label>
+              <Select
+                id="default-provider"
+                name="default-provider"
+                value={formState.defaultProvider}
+                onChange={(event) => handleProviderChange(event.target.value as "openai" | "local")}
+              >
                 <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="local">Local (Ollama)</option>
+                <option value="local">Ollama</option>
               </Select>
             </div>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="default-model">Default Model</Label>
-              </div>
-              <Input id="default-model" name="default-model" defaultValue="gpt-4o" className="font-mono" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="local-url">Local API URL (Ollama/Llama.cpp)</Label>
-                <StatusBadge status="Untested" variant="secondary" />
-              </div>
-              <Input id="local-url" name="local-url" defaultValue="http://localhost:11434" className="font-mono" />
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Market Data Providers */}
-        <Card className="bg-card shadow-panel border-border">
-          <CardHeader className="border-b border-border pb-4 bg-muted/10">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Database className="h-4 w-4" />
-              Market Data Providers
-            </CardTitle>
-            <CardDescription>Configure data sources for fundamental and pricing data.</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-6 space-y-4">
             <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="fmp-key">Financial Modeling Prep</Label>
-                <StatusBadge status="Connected" variant="success" />
-              </div>
-              <Input
-                id="fmp-key"
-                name="fmp-key"
-                defaultValue="xxxxx"
-                type="password"
-                className="font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <Label htmlFor="yfinance">Yahoo Finance (Local fallback)</Label>
-                <StatusBadge status="Local" variant="info" />
-              </div>
-              <div className="text-sm text-muted-foreground mt-1">Used automatically if primary data provider fails. No key required.</div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Local Config & Cache */}
-        <Card className="bg-card shadow-panel border-border">
-          <CardHeader className="border-b border-border pb-4 bg-muted/10">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <HardDrive className="h-4 w-4" />
-              Local Storage & Cache
-            </CardTitle>
-            <CardDescription>Manage SQLite database and report caching.</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-6 space-y-4">
-            <div className="space-y-2">
-              <Label>SQLite DB Path</Label>
-              <div className="px-3 py-2 bg-muted/50 rounded-md border border-border text-sm font-mono text-muted-foreground break-all">
-                ./openalpha.db
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Data Cache</Label>
-              <div className="flex items-center gap-3">
-                <Select defaultValue="7d">
-                  <option value="1d">Retain 1 Day</option>
-                  <option value="7d">Retain 7 Days</option>
-                  <option value="30d">Retain 30 Days</option>
-                  <option value="forever">Keep Forever</option>
+              <Label htmlFor="default-model">Default Model</Label>
+              {formState.defaultProvider === "local" ? (
+                <Input
+                  id="default-model"
+                  name="default-model"
+                  className="font-mono"
+                  value={formState.ollamaModel}
+                  onChange={(event) => {
+                    const nextModel = event.target.value;
+                    setFormState((current) => ({
+                      ...current,
+                      ollamaModel: nextModel,
+                      defaultModel: nextModel,
+                    }));
+                  }}
+                />
+              ) : (
+                <Select
+                  id="default-model"
+                  name="default-model"
+                  value={formState.defaultModel}
+                  onChange={(event) => updateField("defaultModel", event.target.value)}
+                >
+                  {modelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </Select>
-                <Button type="button" variant="secondary">Clear Cache</Button>
-              </div>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Submit Actions */}
-        <div className="lg:col-span-2 flex items-center justify-end gap-4 border-t border-border pt-6">
-          {saved && (
-            <span className="text-sm font-mono text-success">
-              [SYSTEM] Configuration updated successfully.
-            </span>
-          )}
-          <Button type="submit" className="font-semibold font-mono bg-primary text-primary-foreground">
-            <Save className="h-4 w-4 mr-2" aria-hidden="true" />
+        <Card className="border-border bg-card shadow-panel">
+          <CardHeader className="border-b border-border bg-muted/10 pb-4">
+            <CardTitle className="text-base">Configured Providers</CardTitle>
+            <CardDescription>Backend-visible provider configuration and last known state.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-6">
+            {settings?.configured_providers.length ? (
+              settings.configured_providers.map((provider) => (
+                <div
+                  key={provider.provider}
+                  className="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/20 px-3 py-3"
+                >
+                  <div>
+                    <p className="font-medium">{provider.label}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {provider.model ?? "Credential configured"}
+                    </p>
+                  </div>
+                  <StatusBadge
+                    status={statusLabel(provider.status)}
+                    variant={statusVariant(provider.status)}
+                  />
+                </div>
+              ))
+            ) : (
+              <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                No providers configured yet.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex items-center justify-between gap-4 border-t border-border pt-6 lg:col-span-2">
+          <div className="text-sm">
+            {isLoading ? (
+              <span className="text-muted-foreground">Loading settings...</span>
+            ) : saveState.message ? (
+              <span
+                className={
+                  saveState.status === "error" ? "text-destructive" : "text-success"
+                }
+              >
+                {saveState.message}
+              </span>
+            ) : error ? (
+              <span className="text-destructive">{error}</span>
+            ) : null}
+          </div>
+
+          <Button
+            type="submit"
+            className="bg-primary font-mono font-semibold text-primary-foreground"
+            disabled={isLoading || saveState.status === "saving"}
+          >
+            {saveState.status === "saving" ? (
+              <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+            )}
             Apply Settings
           </Button>
         </div>
-
       </form>
     </>
   );
+}
+
+function statusLabel(status: ProviderStatus) {
+  switch (status) {
+    case "configured":
+      return "Configured";
+    case "missing":
+      return "Missing";
+    case "tested":
+      return "Tested";
+    case "failed":
+      return "Failed";
+    default:
+      return "Untested";
+  }
+}
+
+function statusVariant(status: ProviderStatus) {
+  switch (status) {
+    case "tested":
+      return "success" as const;
+    case "configured":
+      return "info" as const;
+    case "failed":
+      return "destructive" as const;
+    case "missing":
+      return "warning" as const;
+    default:
+      return "secondary" as const;
+  }
 }

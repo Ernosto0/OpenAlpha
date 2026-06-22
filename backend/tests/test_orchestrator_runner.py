@@ -4,11 +4,13 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
+import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
 from backend.app.db.models import AgentOutput, AnalysisRun, CostTrace, Report
+from backend.app.llm import LLMProviderError
 from backend.app.orchestrator.base import AnalysisEventEmitter, AnalysisRunner
 from backend.app.orchestrator.schemas import (
     AgentSummaries,
@@ -316,6 +318,42 @@ def test_analysis_runner_completes_with_partial_failures_and_persists_failed_out
     ) > event_index(
         emitter.history(context.run_id), "agent_failed", "technical_agent"
     )
+
+
+def test_analysis_runner_stops_on_fatal_llm_error() -> None:
+    engine, session_factory = make_session_factory()
+    emitter = AnalysisEventEmitter()
+    runner = make_runner(
+        emitter,
+        session_factory,
+        technical_error=LLMProviderError(
+            "OpenAI API returned HTTP 429: quota exceeded",
+            status_code=429,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="quota exceeded"):
+        asyncio.run(runner.run(make_request()))
+
+    with Session(engine) as session:
+        run = session.exec(select(AnalysisRun)).one()
+        reports = session.exec(select(Report)).all()
+        agent_outputs = session.exec(select(AgentOutput)).all()
+
+    assert run.status == "failed"
+    assert "quota exceeded" in (run.error_message or "")
+    assert reports == []
+    assert any(
+        output.agent_name == "data_collector" and output.status == "completed"
+        for output in agent_outputs
+    )
+    fatal_outputs = [
+        output for output in agent_outputs if output.agent_name == "technical_agent"
+    ]
+    assert len(fatal_outputs) == 1
+    assert fatal_outputs[0].status == "failed"
+    assert "quota exceeded" in (fatal_outputs[0].error_message or "")
+    assert emitter.history()[-1].type == "analysis_failed"
 
 
 def test_analysis_runner_marks_run_failed_on_fatal_orchestration_error() -> None:

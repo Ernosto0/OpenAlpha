@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
@@ -149,17 +149,31 @@ class NewsSentimentAgent(BaseAgent[NewsSentimentOutput]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": NEWS_SENTIMENT_SYSTEM_PROMPT},
-                {"role": "user", "content": self.build_user_prompt(context)},
-            ],
-            output_schema=NewsSentimentOutput,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": NEWS_SENTIMENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.build_user_prompt(context)},
+                ],
+                output_schema=NewsSentimentOutput,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_output_for_llm_failure(context, str(exc))
+            context.news_sentiment_output = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=["news"],
+                warnings=output.warnings,
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, NewsSentimentOutput):
@@ -179,6 +193,35 @@ class NewsSentimentAgent(BaseAgent[NewsSentimentOutput]):
             data_used=["news"],
             warnings=warnings,
             parsing_errors=result.parsing_errors,
+        )
+
+    def _fallback_output_for_llm_failure(
+        self,
+        context: AnalysisContext,
+        error_message: str,
+    ) -> NewsSentimentOutput:
+        news_items = self._news_items(context)
+        warnings = self._dedupe(
+            [
+                "News sentiment analysis used a deterministic fallback because the LLM request failed.",
+                f"LLM error: {error_message}",
+                *self._news_warnings(context),
+            ]
+        )
+        return NewsSentimentOutput(
+            view="insufficient_data",
+            confidence=0.15,
+            sentiment_summary=(
+                "News items were collected, but the AI sentiment interpretation step "
+                "could not be completed because the configured LLM provider request failed."
+            ),
+            important_news=[],
+            warnings=warnings
+            + (
+                [f"{len(news_items)} raw news item(s) were collected but not fully interpreted."]
+                if news_items
+                else []
+            ),
         )
 
     def build_user_prompt(self, context: AnalysisContext) -> str:

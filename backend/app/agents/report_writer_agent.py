@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     DISCLAIMER,
@@ -271,17 +271,37 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": REPORT_WRITER_AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": self.build_user_prompt(context)},
-            ],
-            output_schema=FinalReport,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": REPORT_WRITER_AGENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.build_user_prompt(context)},
+                ],
+                output_schema=FinalReport,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_report(
+                context,
+                reason=(
+                    "The Report Writer Agent used a deterministic fallback because "
+                    f"the LLM request failed: {exc}"
+                ),
+            )
+            context.final_report = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=self._data_used(context),
+                warnings=output.warnings,
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, FinalReport):
@@ -401,43 +421,86 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             )
         return prompt
 
-    def _fallback_report(self, context: AnalysisContext) -> FinalReport:
+    def _fallback_report(
+        self,
+        context: AnalysisContext,
+        *,
+        reason: str | None = None,
+    ) -> FinalReport:
         company_name = self._company_name(context) or "Unknown"
         warnings = self._report_warnings(context)
+        if reason:
+            warnings = self._dedupe([reason, *warnings])
+        thesis_output = context.thesis_output
+        overall_view = (
+            thesis_output.overall_view if thesis_output is not None else "insufficient_data"
+        )
+        confidence = thesis_output.confidence if thesis_output is not None else 0.1
+        investment_thesis = (
+            thesis_output.thesis
+            if thesis_output is not None
+            else (
+                "A reliable final investment thesis is unavailable because the "
+                "Thesis Agent output is missing from the analysis context."
+            )
+        )
+        base_case = (
+            thesis_output.base_case
+            if thesis_output is not None
+            else "No reliable base case can be formed without a completed thesis."
+        )
+        bull_case_summary = (
+            thesis_output.bull_case_summary
+            if thesis_output is not None
+            else (
+                context.bull_case_output.bull_case
+                if context.bull_case_output is not None
+                else "Bull case output is unavailable."
+            )
+        )
+        bear_case_summary = (
+            thesis_output.bear_case_summary
+            if thesis_output is not None
+            else (
+                context.bear_case_output.bear_case
+                if context.bear_case_output is not None
+                else "Bear case output is unavailable."
+            )
+        )
+        what_to_watch = (
+            list(thesis_output.what_to_watch)
+            if thesis_output is not None
+            else [
+                "Whether the missing thesis output can be regenerated.",
+                "Whether missing upstream agents can be rerun successfully.",
+                "Whether data quality improves enough for a complete report.",
+            ]
+        )
+        executive_summary = (
+            "The report was assembled from deterministic fallbacks because the final "
+            "LLM-based report writing step could not be completed."
+            if reason
+            else (
+                "The report could not be completed with a reliable final AI view "
+                "because the thesis output is missing. Available upstream research "
+                "is preserved below, but the result should be treated as incomplete."
+            )
+        )
         report = FinalReport(
             title=f"Equity Research Report: {context.request.symbol}",
             symbol=context.request.symbol,
             company_name=company_name,
             market=context.request.market,
             created_at=context.updated_at,
-            overall_view="insufficient_data",
-            confidence=0.1,
+            overall_view=overall_view,
+            confidence=confidence,
             horizon=context.request.horizon,
-            executive_summary=(
-                "The report could not be completed with a reliable final AI view "
-                "because the thesis output is missing. Available upstream research "
-                "is preserved below, but the result should be treated as incomplete."
-            ),
-            investment_thesis=(
-                "A reliable final investment thesis is unavailable because the "
-                "Thesis Agent output is missing from the analysis context."
-            ),
-            base_case="No reliable base case can be formed without a completed thesis.",
-            bull_case_summary=(
-                context.bull_case_output.bull_case
-                if context.bull_case_output is not None
-                else "Bull case output is unavailable."
-            ),
-            bear_case_summary=(
-                context.bear_case_output.bear_case
-                if context.bear_case_output is not None
-                else "Bear case output is unavailable."
-            ),
-            what_to_watch=[
-                "Whether the missing thesis output can be regenerated.",
-                "Whether missing upstream agents can be rerun successfully.",
-                "Whether data quality improves enough for a complete report.",
-            ],
+            executive_summary=executive_summary,
+            investment_thesis=investment_thesis,
+            base_case=base_case,
+            bull_case_summary=bull_case_summary,
+            bear_case_summary=bear_case_summary,
+            what_to_watch=what_to_watch,
             agent_summaries=self._agent_summaries(context),
             risk_section=self._risk_section(context),
             data_quality_section=self._data_quality_section(context),
@@ -448,31 +511,15 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             report_markdown=self._fallback_markdown(
                 symbol=context.request.symbol,
                 company_name=company_name,
-                overall_view="insufficient_data",
-                confidence=0.1,
+                overall_view=overall_view,
+                confidence=confidence,
                 horizon=context.request.horizon,
-                executive_summary=(
-                    "The final report is incomplete because the thesis output is missing."
-                ),
-                investment_thesis=(
-                    "A reliable final investment thesis is unavailable because the thesis output is missing."
-                ),
-                base_case="No reliable base case can be formed without a completed thesis.",
-                bull_case_summary=(
-                    context.bull_case_output.bull_case
-                    if context.bull_case_output is not None
-                    else "Bull case output is unavailable."
-                ),
-                bear_case_summary=(
-                    context.bear_case_output.bear_case
-                    if context.bear_case_output is not None
-                    else "Bear case output is unavailable."
-                ),
-                what_to_watch=[
-                    "Whether the missing thesis output can be regenerated.",
-                    "Whether missing upstream agents can be rerun successfully.",
-                    "Whether data quality improves enough for a complete report.",
-                ],
+                executive_summary=executive_summary,
+                investment_thesis=investment_thesis,
+                base_case=base_case,
+                bull_case_summary=bull_case_summary,
+                bear_case_summary=bear_case_summary,
+                what_to_watch=what_to_watch,
                 agent_summaries=self._agent_summaries(context),
                 risk_section=self._risk_section(context),
                 data_quality_section=self._data_quality_section(context),

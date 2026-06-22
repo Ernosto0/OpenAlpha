@@ -7,6 +7,7 @@ from typing import Any
 
 
 DEFAULT_SECRETS_FILE = "secrets.json"
+SETTINGS_KEY = "app_settings"
 
 
 def openalpha_home() -> Path:
@@ -57,9 +58,46 @@ def get_provider_api_key(
         if isinstance(value, str) and value.strip():
             return value.strip()
 
+    if secrets_path is None:
+        stored_value = _get_provider_api_key_from_settings(provider_key)
+        if stored_value:
+            return stored_value
+
     if env_var:
         value = os.getenv(env_var)
         if value and value.strip():
             return value.strip()
+
+    return None
+
+
+def _get_provider_api_key_from_settings(provider_key: str) -> str | None:
+    try:
+        from sqlmodel import Session
+
+        from backend.app.db.models import Setting
+        from backend.app.db.session import engine
+    except Exception:
+        return None
+
+    try:
+        with Session(engine) as session:
+            row = session.get(Setting, SETTINGS_KEY)
+    except Exception:
+        return None
+
+    if row is None or not isinstance(row.value_json, dict):
+        return None
+
+    provider_value = row.value_json.get(provider_key)
+    if isinstance(provider_value, dict):
+        for key_name in ("api_key", "key", f"{provider_key}_api_key"):
+            value = provider_value.get(key_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    direct_value = row.value_json.get(f"{provider_key}_api_key")
+    if isinstance(direct_value, str) and direct_value.strip():
+        return direct_value.strip()
 
     return None

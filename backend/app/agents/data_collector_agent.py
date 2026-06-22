@@ -9,6 +9,7 @@ from backend.app.marketdata.base import (
     MarketDataProvider,
     PriceHistoryResult,
     get_default_market_data_provider,
+    get_market_data_provider,
 )
 from backend.app.marketdata.providers.sec_provider import SECProvider
 from backend.app.news.base import NewsProviderResult, get_news_service
@@ -52,7 +53,8 @@ class DataCollectorAgent(BaseAgent[DataCollectorOutput]):
         **kwargs: Any,
     ) -> None:
         super().__init__(provider="local", model="deterministic", **kwargs)
-        self.price_provider = price_provider or get_default_market_data_provider()
+        self.price_providers = self._resolve_price_providers(price_provider)
+        self.price_provider = self.price_providers[0]
         self.facts_provider = facts_provider or SECProvider()
         self.news_service = news_service or get_news_service()
         self.news_limit = news_limit
@@ -174,14 +176,25 @@ class DataCollectorAgent(BaseAgent[DataCollectorOutput]):
         symbol: str,
         warnings: list[str],
     ) -> PriceHistoryResult | None:
-        try:
-            return await self.price_provider.get_price_history(symbol)
-        except Exception as exc:  # noqa: BLE001 - preserve partial analysis context.
-            warnings.append(
-                f"{self._provider_name(self.price_provider)} "
-                f"price history failed: {exc}"
-            )
-            return None
+        last_result: PriceHistoryResult | None = None
+
+        for provider in self.price_providers:
+            try:
+                result = await provider.get_price_history(symbol)
+            except Exception as exc:  # noqa: BLE001 - preserve partial analysis context.
+                warnings.append(
+                    f"{self._provider_name(provider)} "
+                    f"price history failed: {exc}"
+                )
+                continue
+
+            last_result = result
+            if result.bars:
+                return result
+
+            warnings.extend(result.warnings)
+
+        return last_result
 
     async def _fetch_company_facts(
         self,
@@ -299,6 +312,23 @@ class DataCollectorAgent(BaseAgent[DataCollectorOutput]):
             if stripped:
                 deduped.setdefault(stripped, None)
         return list(deduped)
+
+    def _resolve_price_providers(
+        self,
+        primary_provider: MarketDataProvider | None,
+    ) -> list[MarketDataProvider]:
+        if primary_provider is not None:
+            return [primary_provider]
+
+        providers: list[MarketDataProvider] = [get_default_market_data_provider()]
+        for provider_name in ("yahoo",):
+            candidate = get_market_data_provider(provider_name)
+            if all(
+                self._provider_name(existing) != self._provider_name(candidate)
+                for existing in providers
+            ):
+                providers.append(candidate)
+        return providers
 
 
 __all__ = ["DataCollectorAgent", "NewsFetcher"]

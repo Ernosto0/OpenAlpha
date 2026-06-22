@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -138,6 +139,12 @@ async def wait_for_completion(client: httpx.AsyncClient, run_id: str) -> dict:
 async def test_analysis_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_test_manager()
     monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_settings",
+        lambda: SimpleNamespace(
+            providers={"openai": SimpleNamespace(api_key_configured=True)}
+        ),
+    )
 
     app = create_app()
     transport = httpx.ASGITransport(app=app)
@@ -180,6 +187,45 @@ async def test_analysis_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
             "agent_finished",
             "analysis_completed",
         ]
+
+
+@pytest.mark.anyio
+async def test_analysis_run_requires_openai_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_test_manager()
+    monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_settings",
+        lambda: SimpleNamespace(
+            providers={"openai": SimpleNamespace(api_key_configured=False)}
+        ),
+    )
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    request_payload = {
+        "symbol": "AAPL",
+        "market": "US",
+        "horizon": "3m",
+        "depth": "standard",
+        "language": "en",
+        "llm_provider": "openai",
+        "llm_model": "gpt-4.1-mini",
+        "custom_question": None,
+    }
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        create_response = await client.post("/api/analysis/run", json=request_payload)
+
+    assert create_response.status_code == 400
+    assert (
+        create_response.json()["detail"]
+        == "OpenAI API key is missing. Add it in Settings before running analysis."
+    )
 
 
 @pytest.mark.anyio

@@ -1,201 +1,282 @@
-import { ArrowLeft, CheckCircle2, ShieldAlert } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { PageHeader } from "../components/page-header";
+import { CostBreakdown } from "../components/shared/cost-breakdown";
+import { DataQualityBar } from "../components/shared/data-quality-bar";
+import { RiskBadge, StatusBadge } from "../components/shared/status-badges";
 import { buttonVariants } from "../components/ui/button-styles";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "../components/ui/card";
-import { StatusBadge, RiskBadge } from "../components/shared/status-badges";
-import { DataQualityBar } from "../components/shared/data-quality-bar";
-import { CostBreakdown } from "../components/shared/cost-breakdown";
-import { reportDetails } from "../data/reports";
+import {
+  formatAgentName,
+  formatOverallView,
+  toRiskBadgeLevel,
+} from "../lib/analysis";
+import { api, type ReportDetail } from "../lib/api";
 
 export function ReportDetailPage() {
   const { id } = useParams();
-  const report = id ? reportDetails[id] : undefined;
+  const [report, setReport] = useState<ReportDetail | null>(null);
+  const [loading, setLoading] = useState(Boolean(id));
+  const [error, setError] = useState<string | null>(null);
 
-  if (!report) {
-    return (
-      <>
-        <PageHeader title="Report not found" description="The requested report does not exist." />
-        <Link className={buttonVariants({ variant: "secondary" })} to="/reports">
-          Back to reports
-        </Link>
-      </>
-    );
-  }
+  useEffect(() => {
+    if (!id) {
+      setLoading(false);
+      setError("Report not found.");
+      return;
+    }
 
-  // Safe fallbacks for new Audit Terminal fields not yet in backend
-  const aiView = "Bullish"; 
-  const confidence = 85; 
-  const riskLevel = "Medium"; 
-  const horizon = "6-12 Months";
-  const priceAtReport = "$145.32";
-  
-  const bullCase = report.thesis + " If execution accelerates, upside could be significant given current multiples.";
-  const bearCase = "Conversely, if macroeconomic conditions worsen, revenue could contract and compress margins.";
-  const invalidation = "Thesis invalidates if next quarter revenue growth drops below 5% or gross margins compress by >200bps.";
-  const whatToWatch = "Upcoming earnings call, competitor product announcements, and changes in regulatory policy.";
+    let active = true;
+    setLoading(true);
+    setError(null);
 
-  const mockCosts = [
-    { label: "Data Collection", model: "gpt-4o-mini", inputTokens: 45000, outputTokens: 1200, cost: 0.0068 },
-    { label: "Analysis Pass", model: "claude-3.5-sonnet", inputTokens: 32000, outputTokens: 4000, cost: 0.0960 + 0.0600 },
-    { label: "Synthesis", model: "gpt-4o", inputTokens: 15000, outputTokens: 2500, cost: 0.0750 + 0.0375 },
-  ];
+    api
+      .getReport(id)
+      .then((detail) => {
+        if (!active) {
+          return;
+        }
+
+        setReport(detail);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        setError("Unable to load report.");
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [id]);
+
+  const finalReport = useMemo(() => {
+    if (!report?.final_report || typeof report.final_report !== "object") {
+      return null;
+    }
+
+    return report.final_report as Record<string, unknown>;
+  }, [report]);
 
   return (
     <>
-      <div className="mb-6 flex items-center gap-4">
-        <Link className={buttonVariants({ variant: "secondary", className: "h-8 px-3 font-mono text-xs bg-transparent hover:bg-muted text-muted-foreground" })} to="/reports">
-          <ArrowLeft className="h-3 w-3 mr-2" aria-hidden="true" />
-          BACK TO REPORTS
+      <div className="mb-6">
+        <Link
+          className={buttonVariants({
+            variant: "secondary",
+            className: "font-mono text-xs",
+          })}
+          to="/reports"
+        >
+          <ArrowLeft className="mr-2 h-3 w-3" aria-hidden="true" />
+          Back To Reports
         </Link>
       </div>
 
-      <header className="mb-8">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">{report.symbol}</h1>
-              <span className="text-xl text-muted-foreground font-light border-l border-border pl-3">Apple Inc.</span>
-            </div>
-            <p className="text-muted-foreground font-mono text-sm uppercase tracking-wider">Equity Research Report</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 font-mono text-sm">
-            <div className="flex items-center gap-2 bg-muted/50 px-3 py-1.5 rounded-md border border-border">
-              <span className="text-muted-foreground">PRICE:</span>
-              <span className="text-foreground">{priceAtReport}</span>
-            </div>
-            <div className="flex items-center gap-2 bg-muted/50 px-3 py-1.5 rounded-md border border-border">
-              <span className="text-muted-foreground">DATE:</span>
-              <span className="text-foreground">{new Date(report.createdAt).toLocaleDateString()}</span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Report"
+        title={report ? `${report.symbol} Research Report` : "Report Detail"}
+        description="Persisted final report, cost trace, and data quality summary."
+      />
 
-      {/* Top Summary Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-        <div className="bg-card border border-border rounded-lg p-4 flex flex-col justify-center">
-          <span className="text-xs text-muted-foreground font-mono uppercase mb-1">AI View</span>
-          <div><StatusBadge status={aiView} variant="success" className="text-sm px-2 py-1" /></div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4 flex flex-col justify-center">
-          <span className="text-xs text-muted-foreground font-mono uppercase mb-1">Risk Level</span>
-          <div><RiskBadge level={riskLevel as "Low" | "Medium" | "High"} /></div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4 flex flex-col justify-center">
-          <span className="text-xs text-muted-foreground font-mono uppercase mb-1">Confidence</span>
-          <div className="text-xl font-bold tabular-nums text-foreground">{confidence}%</div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4 flex flex-col justify-center">
-          <span className="text-xs text-muted-foreground font-mono uppercase mb-1">Time Horizon</span>
-          <div className="font-medium text-foreground">{horizon}</div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4 flex flex-col justify-center">
-          <span className="text-xs text-muted-foreground font-mono uppercase mb-1">Status</span>
-          <div className="flex items-center gap-2 font-medium text-success">
-            <CheckCircle2 className="h-4 w-4" />
-            Complete
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-        {/* Main Content Column */}
+      {loading ? (
+        <Card className="bg-card shadow-panel">
+          <CardContent className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+            Loading report...
+          </CardContent>
+        </Card>
+      ) : error || !report ? (
+        <Card className="bg-card shadow-panel">
+          <CardContent className="flex h-40 items-center justify-center text-sm text-destructive">
+            {error ?? "Report not found."}
+          </CardContent>
+        </Card>
+      ) : (
         <div className="space-y-6">
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2">Investment Thesis</h2>
-            <p className="leading-relaxed text-foreground">{report.thesis}</p>
-          </section>
+          <div className="grid gap-4 md:grid-cols-4">
+            <MetricCard
+              label="AI View"
+              value={
+                <StatusBadge
+                  status={formatOverallView(report.overall_view)}
+                  variant={report.overall_view.includes("bear") ? "warning" : "success"}
+                />
+              }
+            />
+            <MetricCard
+              label="Risk"
+              value={<RiskBadge level={toRiskBadgeLevel(report.risk_level)} />}
+            />
+            <MetricCard
+              label="Horizon"
+              value={<span className="font-mono">{report.horizon}</span>}
+            />
+            <MetricCard
+              label="Cost"
+              value={<span className="font-mono">${report.cost_breakdown.total_cost_usd.toFixed(4)}</span>}
+            />
+          </div>
 
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2 text-success">Bull Case</h2>
-            <p className="leading-relaxed text-muted-foreground">{bullCase}</p>
-          </section>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <Card className="bg-card shadow-panel">
+              <CardHeader className="border-b border-border pb-4">
+                <CardTitle>Final Report</CardTitle>
+                <CardDescription>
+                  Inline view of the persisted report payload.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-6">
+                <Section
+                  title="Executive Summary"
+                  body={getString(finalReport?.executive_summary)}
+                />
+                <Section
+                  title="Investment Thesis"
+                  body={getString(finalReport?.investment_thesis)}
+                />
+                <Section
+                  title="Base Case"
+                  body={getString(finalReport?.base_case)}
+                />
+                <Section
+                  title="Bull Case"
+                  body={getString(finalReport?.bull_case_summary)}
+                />
+                <Section
+                  title="Bear Case"
+                  body={getString(finalReport?.bear_case_summary)}
+                />
 
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2 text-destructive">Bear Case</h2>
-            <p className="leading-relaxed text-muted-foreground">{bearCase}</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2 text-warning">Risk Review</h2>
-            <ul className="list-disc pl-5 space-y-2 text-muted-foreground">
-              {report.risks.map((risk, i) => (
-                <li key={i}>{risk}</li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2">Invalidation Conditions</h2>
-            <p className="leading-relaxed text-muted-foreground">{invalidation}</p>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold border-b border-border pb-2">What to Watch</h2>
-            <p className="leading-relaxed text-muted-foreground">{whatToWatch}</p>
-          </section>
-        </div>
-
-        {/* Right Audit Panel */}
-        <div className="space-y-6">
-          <Card className="bg-card shadow-panel border-border">
-            <CardHeader className="pb-3 bg-muted/20 border-b border-border">
-              <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4" />
-                Audit Trail
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-6">
-              
-              <div className="space-y-2">
-                <h3 className="text-xs font-mono text-muted-foreground uppercase">Data Quality</h3>
-                <DataQualityBar score={88} />
-                <p className="text-xs text-muted-foreground mt-1">Based on source diversity and freshness.</p>
-              </div>
-
-              <div className="space-y-2">
-                <h3 className="text-xs font-mono text-muted-foreground uppercase">Sources Used ({report.sources.length})</h3>
-                <div className="flex flex-col gap-1.5">
-                  {report.sources.map((source) => (
-                    <div key={source} className="flex items-center gap-2 text-sm bg-muted/30 px-2 py-1.5 rounded border border-border">
-                      <div className="h-1.5 w-1.5 rounded-full bg-success shrink-0" />
-                      <span className="truncate">{source}</span>
+                {getString(finalReport?.report_markdown) ? (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold">Rendered Report</h3>
+                    <div className="rounded-lg border border-border bg-muted/20 p-4">
+                      <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-foreground">
+                        {getString(finalReport?.report_markdown)}
+                      </pre>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
 
-              <div className="space-y-2">
-                <h3 className="text-xs font-mono text-muted-foreground uppercase">Warnings</h3>
-                <div className="bg-warning/10 border border-warning/20 text-warning px-3 py-2 rounded-md text-xs leading-relaxed">
-                  <strong>Notice:</strong> High variance in sentiment across news sources. Technical indicators conflict with fundamental momentum.
-                </div>
-              </div>
+            <div className="space-y-6">
+              <Card className="bg-card shadow-panel">
+                <CardHeader className="border-b border-border pb-4">
+                  <CardTitle>Data Quality</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-6">
+                  {report.data_quality?.data_quality_score != null ? (
+                    <>
+                      <DataQualityBar score={Math.round(report.data_quality.data_quality_score * 100)} />
+                      <p className="text-sm text-muted-foreground">
+                        Price: {report.data_quality.price_data_status} · News: {report.data_quality.news_data_status}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Data quality metadata unavailable.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
 
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card shadow-panel border-border">
-            <CardHeader className="pb-3 bg-muted/20 border-b border-border">
-              <CardTitle className="text-sm uppercase tracking-wider">Run Telemetry</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
-              <CostBreakdown items={mockCosts} />
-            </CardContent>
-          </Card>
-
-          <div className="text-[10px] leading-relaxed text-muted-foreground/60 p-4 border border-border/50 rounded-lg bg-card/50">
-            <strong>Disclaimer:</strong> This report is generated by an AI system for research and educational purposes only. It is not personalized financial advice, investment advice, or a recommendation to buy or sell any security. Data may be delayed, inaccurate, or hallucinated. Always do your own research.
+              <Card className="bg-card shadow-panel">
+                <CardHeader className="border-b border-border pb-4">
+                  <CardTitle>Sources</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-6">
+                  {report.sources.length ? (
+                    report.sources.map((source) => (
+                      <div
+                        key={`${source.provider}-${source.name}-${source.used_for}`}
+                        className="rounded-lg border border-border bg-muted/20 p-3"
+                      >
+                        <p className="font-medium">{source.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {source.provider} · {source.used_for}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No sources recorded.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
+
+          <Card className="bg-card shadow-panel">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle>Cost Breakdown</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <CostBreakdown
+                items={report.cost_breakdown.items.map((item) => ({
+                  label: formatAgentName(item.agent_name),
+                  model: `${item.provider}/${item.model}`,
+                  inputTokens: item.input_tokens,
+                  outputTokens: item.output_tokens,
+                  cost: item.cost_usd,
+                }))}
+              />
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      )}
     </>
   );
+}
+
+function MetricCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-panel">
+      <p className="text-xs font-mono uppercase tracking-wide text-muted-foreground">{label}</p>
+      <div className="mt-2">{value}</div>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  body,
+}: {
+  title: string;
+  body: string | null;
+}) {
+  if (!body) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      <p className="text-sm leading-6 text-foreground">{body}</p>
+    </div>
+  );
+}
+
+function getString(value: unknown) {
+  return typeof value === "string" ? value : null;
 }

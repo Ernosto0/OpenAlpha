@@ -53,6 +53,8 @@ def test_stooq_provider_parses_historical_ohlcv() -> None:
 
 
 def test_yahoo_provider_normalizes_chart_response() -> None:
+    captured_headers: dict[str, str] | None = None
+
     payload = {
         "chart": {
             "result": [
@@ -76,13 +78,21 @@ def test_yahoo_provider_normalizes_chart_response() -> None:
         }
     }
 
-    provider = YahooProvider(transport=lambda *_args: json.dumps(payload))
+    def transport(_url: str, headers: Any, _timeout: float) -> str:
+        nonlocal captured_headers
+        captured_headers = dict(headers or {})
+        return json.dumps(payload)
+
+    provider = YahooProvider(transport=transport)
     result = asyncio.run(provider.get_price_history("msft"))
 
     assert result.provider == "yahoo"
     assert result.symbol == "MSFT"
     assert result.bars[0].adjusted_close == 103.5
     assert "unofficial" in result.warnings[0].lower()
+    assert captured_headers is not None
+    assert captured_headers["User-Agent"] == "Mozilla/5.0"
+    assert captured_headers["Referer"] == "https://finance.yahoo.com/"
 
 
 def test_yfinance_provider_reports_missing_optional_dependency() -> None:

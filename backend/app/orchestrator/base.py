@@ -310,6 +310,8 @@ class AnalysisRunner:
                 error_message=result.error_message,
             )
         )
+        if result.fatal_error:
+            raise RuntimeError(result.error_message or f"{agent_name} failed fatally")
         return result
 
     def _sync_runtime_outputs(

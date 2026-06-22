@@ -18,6 +18,13 @@ class YahooProvider(MarketDataProvider):
     provider_name = "yahoo"
     capabilities = ("historical_ohlcv", "chart_data")
     base_url = "https://query1.finance.yahoo.com/v8/finance/chart"
+    request_headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/",
+    }
 
     async def get_price_history(
         self,
@@ -34,7 +41,7 @@ class YahooProvider(MarketDataProvider):
             end=end,
             interval=interval,
         )
-        text = await self._fetch_text(url)
+        text = await self._fetch_text(url, headers=self.request_headers)
         bars = self._parse_chart_response(text)
         status = "available" if bars else "missing"
         warnings = ["Yahoo Finance is an unofficial optional fallback."]

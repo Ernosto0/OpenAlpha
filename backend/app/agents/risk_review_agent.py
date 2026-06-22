@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
@@ -217,17 +217,37 @@ class RiskReviewAgent(BaseAgent[RiskReviewAgentOutput]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": RISK_REVIEW_AGENT_SYSTEM_PROMPT},
-                {"role": "user", "content": self.build_user_prompt(context)},
-            ],
-            output_schema=RiskReviewAgentOutput,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": RISK_REVIEW_AGENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self.build_user_prompt(context)},
+                ],
+                output_schema=RiskReviewAgentOutput,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_output_for_llm_failure(context, str(exc))
+            context.risk_review_output = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=self._data_used(context),
+                warnings=self._dedupe(
+                    [
+                        "Risk review used a deterministic fallback because the LLM request failed.",
+                        f"LLM error: {exc}",
+                        *self._input_warnings(context),
+                    ]
+                ),
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, RiskReviewAgentOutput):
@@ -247,6 +267,26 @@ class RiskReviewAgent(BaseAgent[RiskReviewAgentOutput]):
             data_used=self._data_used(context),
             warnings=warnings,
             parsing_errors=result.parsing_errors,
+        )
+
+    def _fallback_output_for_llm_failure(
+        self,
+        context: AnalysisContext,
+        error_message: str,
+    ) -> RiskReviewAgentOutput:
+        return RiskReviewAgentOutput(
+            risk_level="insufficient_data",
+            risk_score=85,
+            main_risks=[
+                "The risk review could not be fully synthesized because the LLM-backed risk analysis step failed.",
+                "Upstream evidence may be present but was not fully integrated into a structured risk judgment.",
+                f"LLM error: {error_message}",
+            ],
+            invalidation_conditions=[
+                "Restore LLM access so the collected technical, sentiment, bull, and bear inputs can be re-evaluated together.",
+                "Re-run the analysis after confirming upstream inputs are still available and current.",
+            ],
+            confidence_adjustment=-0.35,
         )
 
     def build_user_prompt(self, context: AnalysisContext) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, WebSocket
 
 from backend.app.orchestrator.schemas import AnalysisRequest
+from backend.app.services.settings_service import settings_service
 from backend.app.services.analysis_manager import (
     AnalysisRunAcceptedResponse,
     AnalysisRunDetailResponse,
@@ -18,6 +19,13 @@ router = APIRouter(tags=["analysis"])
 async def run_analysis(
     request: AnalysisRequest,
 ) -> AnalysisRunAcceptedResponse:
+    if request.llm_provider.strip().lower() == "openai":
+        settings = settings_service.get_settings()
+        if not settings.providers["openai"].api_key_configured:
+            raise HTTPException(
+                status_code=400,
+                detail="OpenAI API key is missing. Add it in Settings before running analysis.",
+            )
     return await analysis_manager.start_run(request)
 
 

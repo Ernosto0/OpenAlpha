@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
-from backend.app.llm import BaseLLMProvider
+from backend.app.llm import BaseLLMProvider, LLMProviderError
 from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
@@ -157,20 +157,34 @@ class TechnicalAgent(BaseAgent[TechnicalAgentOutput]):
         provider = self.llm_provider or self._create_llm_provider(
             context.request.llm_provider
         )
-        result = await provider.generate_json(
-            messages=[
-                {"role": "system", "content": TECHNICAL_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": self.build_user_prompt(context),
-                },
-            ],
-            output_schema=TechnicalAgentOutput,
-            model=context.request.llm_model,
-            agent_name=self.name,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-        )
+        try:
+            result = await provider.generate_json(
+                messages=[
+                    {"role": "system", "content": TECHNICAL_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": self.build_user_prompt(context),
+                    },
+                ],
+                output_schema=TechnicalAgentOutput,
+                model=context.request.llm_model,
+                agent_name=self.name,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+        except LLMProviderError as exc:
+            if self._should_stop_on_llm_error(exc):
+                raise
+            output = self._fallback_output_for_llm_failure(context, str(exc))
+            context.technical_output = output
+            return AgentExecutionPayload(
+                status="partial",
+                provider="local",
+                model="deterministic",
+                output=output,
+                data_used=["technical_indicators"],
+                warnings=output.warnings,
+            )
 
         output = self.validate_output(result.content)
         if not isinstance(output, TechnicalAgentOutput):
@@ -190,6 +204,33 @@ class TechnicalAgent(BaseAgent[TechnicalAgentOutput]):
             data_used=["technical_indicators"],
             warnings=warnings,
             parsing_errors=result.parsing_errors,
+        )
+
+    def _fallback_output_for_llm_failure(
+        self,
+        context: AnalysisContext,
+        error_message: str,
+    ) -> TechnicalAgentOutput:
+        warnings = self._dedupe(
+            [
+                "Technical analysis used a deterministic fallback because the LLM request failed.",
+                f"LLM error: {error_message}",
+                *self._data_quality_warnings(context),
+            ]
+        )
+        return TechnicalAgentOutput(
+            view="insufficient_data",
+            confidence=0.15,
+            summary=(
+                "Technical indicators were available, but the AI interpretation step "
+                "could not be completed because the configured LLM provider request failed."
+            ),
+            key_signals=[
+                "A deterministic fallback was used instead of full LLM-based technical interpretation.",
+                f"Latest close price: {self._latest_close(context)}.",
+                f"Latest price timestamp: {self._latest_price_timestamp(context)}.",
+            ],
+            warnings=warnings,
         )
 
     def build_user_prompt(self, context: AnalysisContext) -> str:
@@ -376,7 +417,7 @@ Structured technical payload:
         )
 
     def _macd_summary(self, indicators: IndicatorBundle) -> str:
-        if indicators.macd.macd is None:
+        if indicators.macd is None or indicators.macd.macd is None:
             return "- MACD unavailable."
         return (
             f"- MACD: {self._format_optional_float(indicators.macd.macd)}; "
