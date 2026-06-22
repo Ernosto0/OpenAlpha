@@ -30,6 +30,7 @@ import {
   MARKET_OPTIONS,
   HORIZON_OPTIONS,
   formatOverallView,
+  getModelOptionsForSelection,
   getProviderLabel,
   getModelsForProvider,
   toRiskBadgeLevel,
@@ -118,8 +119,19 @@ export function DashboardPage() {
     };
   }, []);
 
-  const modelOptions = getModelsForProvider(formState.llm_provider);
+  const modelOptions = getModelOptionsForSelection(
+    formState.llm_provider,
+    formState.llm_model,
+  );
   const visibleReports = reports.slice(0, 6);
+  const selectedProviderReady =
+    formState.llm_provider === "openai"
+      ? (settings?.providers.openai.api_key_configured ?? false)
+      : formState.llm_provider === "claude"
+        ? (settings?.providers.claude.api_key_configured ?? false)
+        : formState.llm_provider === "gemini"
+          ? (settings?.providers.gemini.api_key_configured ?? false)
+          : true;
 
   function updateField<K extends keyof AnalysisRequest>(
     field: K,
@@ -288,6 +300,8 @@ export function DashboardPage() {
                     onChange={(event) => handleProviderChange(event.target.value as AnalysisProvider)}
                   >
                     <option value="openai">OpenAI</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
                     <option value="local">Ollama</option>
                   </Select>
                 </div>
@@ -332,7 +346,7 @@ export function DashboardPage() {
                 <Button
                   type="submit"
                   className="w-full sm:w-auto font-semibold font-mono bg-primary text-primary-foreground"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !selectedProviderReady}
                 >
                   <PlayCircle className="h-4 w-4 mr-2" aria-hidden="true" />
                   {isSubmitting ? "Starting Analysis..." : "Run Analysis"}
@@ -430,6 +444,30 @@ export function DashboardPage() {
                   }
                 >
                   {settings?.providers.openai.api_key_configured ? "Configured" : "Missing"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Claude Key</span>
+                <span
+                  className={
+                    settings?.providers.claude.api_key_configured
+                      ? "text-success"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {settings?.providers.claude.api_key_configured ? "Configured" : "Missing"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Gemini Key</span>
+                <span
+                  className={
+                    settings?.providers.gemini.api_key_configured
+                      ? "text-success"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {settings?.providers.gemini.api_key_configured ? "Configured" : "Missing"}
                 </span>
               </div>
               <div className="flex justify-between">

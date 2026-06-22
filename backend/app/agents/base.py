@@ -18,7 +18,11 @@ from backend.app.orchestrator.schemas import (
     OpenAlphaSchema,
     utc_now,
 )
-from backend.app.llm import LLMProviderError, should_stop_analysis_for_llm_error
+from backend.app.llm import (
+    LLMProviderError,
+    create_llm_provider,
+    should_stop_analysis_for_llm_error,
+)
 
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -213,3 +217,6 @@ class BaseAgent(ABC, Generic[OutputT]):
 
     def _should_stop_on_llm_error(self, exc: LLMProviderError) -> bool:
         return should_stop_analysis_for_llm_error(exc)
+
+    def _create_llm_provider(self, provider_name: str):
+        return create_llm_provider(provider_name)

@@ -20,7 +20,17 @@ export const DEPTH_OPTIONS = [
 export const PROVIDER_MODEL_OPTIONS = {
   openai: [
     { value: "gpt-4.1-mini", label: "gpt-4.1-mini" },
+    { value: "gpt-4.1", label: "gpt-4.1" },
     { value: "gpt-4o", label: "gpt-4o" },
+  ],
+  claude: [
+    { value: "claude-3-5-sonnet-latest", label: "claude-3-5-sonnet-latest" },
+    { value: "claude-3-7-sonnet-latest", label: "claude-3-7-sonnet-latest" },
+    { value: "claude-3-5-haiku-latest", label: "claude-3-5-haiku-latest" },
+  ],
+  gemini: [
+    { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
+    { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
   ],
   local: [
     { value: "llama3", label: "llama3" },
@@ -41,12 +51,30 @@ export function getModelsForProvider(provider: string) {
   );
 }
 
-export function getProviderLabel(provider: string) {
-  if (provider === "local") {
-    return "Ollama";
+export function getModelOptionsForSelection(provider: string, currentModel: string) {
+  const knownOptions = getModelsForProvider(provider);
+  if (knownOptions.some((option) => option.value === currentModel)) {
+    return knownOptions;
   }
+  return [
+    { value: currentModel, label: `${currentModel} (saved)` },
+    ...knownOptions,
+  ];
+}
 
-  return provider === "openai" ? "OpenAI" : provider;
+export function getProviderLabel(provider: string) {
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "claude":
+      return "Claude";
+    case "gemini":
+      return "Gemini";
+    case "local":
+      return "Ollama";
+    default:
+      return provider;
+  }
 }
 
 export function formatOverallView(view: string) {

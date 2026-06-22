@@ -19,12 +19,22 @@ router = APIRouter(tags=["analysis"])
 async def run_analysis(
     request: AnalysisRequest,
 ) -> AnalysisRunAcceptedResponse:
-    if request.llm_provider.strip().lower() == "openai":
+    provider = request.llm_provider.strip().lower()
+    if provider in {"openai", "claude", "gemini"}:
         settings = settings_service.get_settings()
-        if not settings.providers["openai"].api_key_configured:
+        provider_settings = getattr(settings.providers, provider)
+        if not provider_settings.api_key_configured:
+            labels = {
+                "openai": "OpenAI",
+                "claude": "Claude",
+                "gemini": "Gemini",
+            }
             raise HTTPException(
                 status_code=400,
-                detail="OpenAI API key is missing. Add it in Settings before running analysis.",
+                detail=(
+                    f"{labels[provider]} API key is missing. "
+                    "Add it in Settings before running analysis."
+                ),
             )
     return await analysis_manager.start_run(request)
 

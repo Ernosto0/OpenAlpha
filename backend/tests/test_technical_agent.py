@@ -229,4 +229,47 @@ def test_technical_agent_stops_when_quota_is_exceeded() -> None:
     assert result.status == "failed"
     assert result.fatal_error is True
     assert "quota exceeded" in (result.error_message or "")
-    assert context.latest_agent_result("technical_agent") == result
+    assert context.agent_results[-1] == result
+
+
+@pytest.mark.parametrize("provider_name", ["claude", "gemini"])
+def test_technical_agent_uses_shared_provider_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_name: str,
+) -> None:
+    indicators = IndicatorBundle(
+        symbol="AAPL",
+        horizon="1m",
+        moving_averages={"20": 101.0},
+    )
+    context = AnalysisContext(
+        run_id="run_technical_factory",
+        request=AnalysisRequest(
+            symbol="AAPL",
+            horizon="1m",
+            llm_provider=provider_name,
+            llm_model="test-model",
+        ),
+        indicators=indicators,
+    )
+    context.market_data = MarketDataBundle(
+        symbol="AAPL",
+        market="US",
+        price_history=[PriceBar(timestamp="2026-06-20T00:00:00Z", close=104.1)],
+    )
+
+    factory_calls: list[str] = []
+    provider = FakeLLMProvider()
+    provider.provider_name = provider_name
+
+    def fake_factory(name: str):
+        factory_calls.append(name)
+        return provider
+
+    monkeypatch.setattr("backend.app.agents.base.create_llm_provider", fake_factory)
+
+    result = asyncio.run(TechnicalAgent().run(context))
+
+    assert result.status == "completed"
+    assert result.provider == provider_name
+    assert factory_calls == [provider_name]

@@ -19,7 +19,9 @@ export type ProviderStatus =
   | "failed"
   | "untested";
 
-export type OpenAISettings = {
+export type RuntimeProvider = "openai" | "claude" | "gemini" | "local";
+
+export type RemoteProviderSettings = {
   api_key_configured: boolean;
   api_key_masked: string | null;
   status: ProviderStatus;
@@ -36,32 +38,36 @@ export type LocalSettings = {
 };
 
 export type ConfiguredProviderSummary = {
-  provider: "openai" | "local";
+  provider: RuntimeProvider;
   label: string;
   status: ProviderStatus;
   model: string | null;
 };
 
 export type AppSettings = {
-  default_provider: "openai" | "local";
+  default_provider: RuntimeProvider;
   default_model: string;
   providers: {
-    openai: OpenAISettings;
+    openai: RemoteProviderSettings;
+    claude: RemoteProviderSettings;
+    gemini: RemoteProviderSettings;
     local: LocalSettings;
   };
   configured_providers: ConfiguredProviderSummary[];
 };
 
 export type AppSettingsUpdate = {
-  default_provider: "openai" | "local";
+  default_provider: RuntimeProvider;
   default_model: string;
   openai_api_key: string | null;
+  anthropic_api_key: string | null;
+  gemini_api_key: string | null;
   ollama_base_url: string;
   ollama_model: string;
 };
 
 export type ProviderTestResult = {
-  provider: "openai" | "local";
+  provider: RuntimeProvider;
   success: boolean;
   status: ProviderStatus;
   message: string;
@@ -288,7 +294,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
-  testProvider: (provider: "openai" | "local") =>
+  testProvider: (provider: RuntimeProvider) =>
     request<ProviderTestResult>("/api/providers/llm/test", {
       method: "POST",
       body: JSON.stringify({ provider }),

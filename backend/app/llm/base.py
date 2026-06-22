@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
@@ -181,8 +182,9 @@ class BaseLLMProvider(ABC):
         raw_content: str,
         output_schema: type[TModel],
     ) -> TModel:
+        normalized_content = self.normalize_json_text(raw_content)
         try:
-            return output_schema.model_validate_json(raw_content)
+            return output_schema.model_validate_json(normalized_content)
         except ValidationError as exc:
             raise LLMResponseValidationError(
                 f"LLM JSON response failed {output_schema.__name__} validation: {exc}",
@@ -193,6 +195,25 @@ class BaseLLMProvider(ABC):
                 f"LLM response was not valid JSON: {exc}",
                 retryable=True,
             ) from exc
+
+    def normalize_json_text(self, raw_content: str) -> str:
+        stripped = raw_content.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", stripped)
+            stripped = re.sub(r"\s*```$", "", stripped)
+            stripped = stripped.strip()
+
+        start = min(
+            (
+                index
+                for index in (stripped.find("{"), stripped.find("["))
+                if index != -1
+            ),
+            default=-1,
+        )
+        if start > 0:
+            stripped = stripped[start:].strip()
+        return stripped
 
     def validate_json_dict(
         self,

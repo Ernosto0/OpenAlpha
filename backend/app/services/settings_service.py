@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import datetime
@@ -14,14 +15,31 @@ from backend.app.db.session import engine
 from backend.app.orchestrator.schemas import OpenAlphaSchema, utc_now
 
 
-SettingsProvider = Literal["openai", "local"]
+SettingsProvider = Literal["openai", "claude", "gemini", "local"]
 ProviderTestStatus = Literal["configured", "missing", "tested", "failed", "untested"]
-ProviderTestable = Literal["openai", "local"]
+ProviderTestable = Literal["openai", "claude", "gemini", "local"]
+ProviderTestTransport = Callable[[str, Mapping[str, str], float], str]
 
 SETTINGS_KEY = "app_settings"
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-latest"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
 DEFAULT_OLLAMA_MODEL = "llama3"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+PROVIDER_LABELS: dict[SettingsProvider, str] = {
+    "openai": "OpenAI",
+    "claude": "Claude",
+    "gemini": "Gemini",
+    "local": "Ollama",
+}
+
+REMOTE_PROVIDERS: tuple[SettingsProvider, ...] = ("openai", "claude", "gemini")
+API_KEY_FIELDS: dict[Literal["openai", "claude", "gemini"], str] = {
+    "openai": "openai_api_key",
+    "claude": "anthropic_api_key",
+    "gemini": "gemini_api_key",
+}
 
 
 class ConfiguredProviderSummary(OpenAlphaSchema):
@@ -31,7 +49,7 @@ class ConfiguredProviderSummary(OpenAlphaSchema):
     model: str | None = None
 
 
-class OpenAIProviderSettings(OpenAlphaSchema):
+class RemoteProviderSettings(OpenAlphaSchema):
     api_key_configured: bool = False
     api_key_masked: str | None = None
     status: ProviderTestStatus = "missing"
@@ -47,10 +65,17 @@ class OllamaProviderSettings(OpenAlphaSchema):
     last_tested_at: datetime | None = None
 
 
+class AppSettingsProviders(OpenAlphaSchema):
+    openai: RemoteProviderSettings
+    claude: RemoteProviderSettings
+    gemini: RemoteProviderSettings
+    local: OllamaProviderSettings
+
+
 class AppSettingsResponse(OpenAlphaSchema):
     default_provider: SettingsProvider = "openai"
     default_model: str = DEFAULT_OPENAI_MODEL
-    providers: dict[str, OpenAIProviderSettings | OllamaProviderSettings]
+    providers: AppSettingsProviders
     configured_providers: list[ConfiguredProviderSummary] = Field(default_factory=list)
 
 
@@ -58,6 +83,8 @@ class AppSettingsUpdate(OpenAlphaSchema):
     default_provider: SettingsProvider
     default_model: str = Field(min_length=1, max_length=120)
     openai_api_key: str | None = Field(default=None, max_length=500)
+    anthropic_api_key: str | None = Field(default=None, max_length=500)
+    gemini_api_key: str | None = Field(default=None, max_length=500)
     ollama_base_url: str = Field(min_length=1, max_length=300)
     ollama_model: str = Field(min_length=1, max_length=120)
 
@@ -79,10 +106,16 @@ class SettingsService:
         self,
         *,
         session_factory: Callable[[], Session] | None = None,
-        openai_test_transport: Callable[[str, Mapping[str, str], float], str] | None = None,
+        openai_test_transport: ProviderTestTransport | None = None,
+        claude_test_transport: ProviderTestTransport | None = None,
+        gemini_test_transport: ProviderTestTransport | None = None,
     ) -> None:
         self._session_factory = session_factory or (lambda: Session(engine))
-        self._openai_test_transport = openai_test_transport or self._default_openai_test_transport
+        self._provider_test_transports: dict[str, ProviderTestTransport] = {
+            "openai": openai_test_transport or self._default_test_transport,
+            "claude": claude_test_transport or self._default_test_transport,
+            "gemini": gemini_test_transport or self._default_test_transport,
+        }
 
     def get_settings(self) -> AppSettingsResponse:
         with self._session_factory() as session:
@@ -96,6 +129,10 @@ class SettingsService:
             payload["default_model"] = update.default_model.strip()
             if update.openai_api_key is not None:
                 payload["openai_api_key"] = self._normalize_secret(update.openai_api_key)
+            if update.anthropic_api_key is not None:
+                payload["anthropic_api_key"] = self._normalize_secret(update.anthropic_api_key)
+            if update.gemini_api_key is not None:
+                payload["gemini_api_key"] = self._normalize_secret(update.gemini_api_key)
             payload["ollama_base_url"] = update.ollama_base_url.strip().rstrip("/")
             payload["ollama_model"] = update.ollama_model.strip()
             self._save_payload(session, payload)
@@ -105,15 +142,20 @@ class SettingsService:
         with self._session_factory() as session:
             payload = self._load_payload(session)
             tested_at = utc_now()
-            if request.provider == "openai":
-                response = self._test_openai(payload, tested_at)
-            else:
+
+            if request.provider == "local":
                 response = ProviderTestResponse(
                     provider="local",
                     success=False,
                     status="untested",
                     message="Ollama live testing is not implemented in this version.",
                     tested_at=tested_at,
+                )
+            else:
+                response = self._test_remote_provider(
+                    request.provider,
+                    payload,
+                    tested_at,
                 )
 
             test_results = payload.setdefault("provider_test_results", {})
@@ -125,59 +167,86 @@ class SettingsService:
             self._save_payload(session, payload)
             return response
 
-    def _test_openai(
+    def _test_remote_provider(
         self,
+        provider: Literal["openai", "claude", "gemini"],
         payload: dict[str, Any],
         tested_at: datetime,
     ) -> ProviderTestResponse:
-        api_key = self._normalize_secret(payload.get("openai_api_key"))
+        api_key = self._normalize_secret(payload.get(API_KEY_FIELDS[provider]))
+        label = PROVIDER_LABELS[provider]
         if not api_key:
             return ProviderTestResponse(
-                provider="openai",
+                provider=provider,
                 success=False,
                 status="missing",
-                message="OpenAI API key is missing.",
+                message=f"{label} API key is missing.",
                 tested_at=tested_at,
             )
 
-        headers = {"Authorization": f"Bearer {api_key}"}
+        url, headers = self._build_provider_test_request(provider, api_key)
+        transport = self._provider_test_transports[provider]
         try:
-            self._openai_test_transport("https://api.openai.com/v1/models", headers, 15.0)
+            transport(url, headers, 15.0)
         except urllib.error.HTTPError as exc:
             message = exc.read().decode("utf-8", errors="replace").strip() or f"HTTP {exc.code}"
             return ProviderTestResponse(
-                provider="openai",
+                provider=provider,
                 success=False,
                 status="failed",
-                message=f"OpenAI test failed: {message}",
+                message=f"{label} test failed: {message}",
                 tested_at=tested_at,
             )
         except urllib.error.URLError as exc:
             return ProviderTestResponse(
-                provider="openai",
+                provider=provider,
                 success=False,
                 status="failed",
-                message=f"OpenAI test failed: {exc.reason}",
+                message=f"{label} test failed: {exc.reason}",
                 tested_at=tested_at,
             )
         except Exception as exc:
             return ProviderTestResponse(
-                provider="openai",
+                provider=provider,
                 success=False,
                 status="failed",
-                message=f"OpenAI test failed: {exc}",
+                message=f"{label} test failed: {exc}",
                 tested_at=tested_at,
             )
 
         return ProviderTestResponse(
-            provider="openai",
+            provider=provider,
             success=True,
             status="tested",
-            message="OpenAI credentials are valid.",
+            message=f"{label} credentials are valid.",
             tested_at=tested_at,
         )
 
-    def _default_openai_test_transport(
+    def _build_provider_test_request(
+        self,
+        provider: Literal["openai", "claude", "gemini"],
+        api_key: str,
+    ) -> tuple[str, dict[str, str]]:
+        if provider == "openai":
+            return (
+                "https://api.openai.com/v1/models",
+                {"Authorization": f"Bearer {api_key}"},
+            )
+        if provider == "claude":
+            return (
+                "https://api.anthropic.com/v1/models",
+                {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+        encoded_key = urllib.parse.quote(api_key, safe="")
+        return (
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={encoded_key}",
+            {},
+        )
+
+    def _default_test_transport(
         self,
         url: str,
         headers: Mapping[str, str],
@@ -217,20 +286,14 @@ class SettingsService:
 
     def _build_response(self, payload: dict[str, Any]) -> AppSettingsResponse:
         test_results = self._normalize_test_results(payload.get("provider_test_results"))
-        openai_status = self._resolve_openai_status(payload, test_results)
-        ollama_status = self._resolve_local_status(payload, test_results)
-
-        openai_settings = OpenAIProviderSettings(
-            api_key_configured=bool(self._normalize_secret(payload.get("openai_api_key"))),
-            api_key_masked=self._mask_secret(payload.get("openai_api_key")),
-            status=openai_status,
-            last_test_message=test_results.get("openai", {}).get("message"),
-            last_tested_at=self._parse_datetime(test_results.get("openai", {}).get("tested_at")),
-        )
-        ollama_settings = OllamaProviderSettings(
+        remote_settings = {
+            provider: self._build_remote_provider_settings(payload, test_results, provider)
+            for provider in REMOTE_PROVIDERS
+        }
+        local_settings = OllamaProviderSettings(
             base_url=str(payload.get("ollama_base_url") or DEFAULT_OLLAMA_BASE_URL),
             model=str(payload.get("ollama_model") or DEFAULT_OLLAMA_MODEL),
-            status=ollama_status,
+            status=self._resolve_local_status(payload, test_results),
             last_test_message=test_results.get("local", {}).get("message"),
             last_tested_at=self._parse_datetime(test_results.get("local", {}).get("tested_at")),
         )
@@ -238,47 +301,67 @@ class SettingsService:
         return AppSettingsResponse(
             default_provider=self._coerce_provider(payload.get("default_provider")),
             default_model=str(payload.get("default_model") or DEFAULT_OPENAI_MODEL),
-            providers={
-                "openai": openai_settings,
-                "local": ollama_settings,
-            },
-            configured_providers=self._configured_providers(openai_settings, ollama_settings),
+            providers=AppSettingsProviders(
+                openai=remote_settings["openai"],
+                claude=remote_settings["claude"],
+                gemini=remote_settings["gemini"],
+                local=local_settings,
+            ),
+            configured_providers=self._configured_providers(remote_settings, local_settings),
+        )
+
+    def _build_remote_provider_settings(
+        self,
+        payload: dict[str, Any],
+        test_results: dict[str, dict[str, str]],
+        provider: Literal["openai", "claude", "gemini"],
+    ) -> RemoteProviderSettings:
+        secret_value = payload.get(API_KEY_FIELDS[provider])
+        return RemoteProviderSettings(
+            api_key_configured=bool(self._normalize_secret(secret_value)),
+            api_key_masked=self._mask_secret(secret_value),
+            status=self._resolve_remote_status(payload, test_results, provider),
+            last_test_message=test_results.get(provider, {}).get("message"),
+            last_tested_at=self._parse_datetime(test_results.get(provider, {}).get("tested_at")),
         )
 
     def _configured_providers(
         self,
-        openai_settings: OpenAIProviderSettings,
-        ollama_settings: OllamaProviderSettings,
+        remote_settings: Mapping[str, RemoteProviderSettings],
+        local_settings: OllamaProviderSettings,
     ) -> list[ConfiguredProviderSummary]:
         providers: list[ConfiguredProviderSummary] = []
-        if openai_settings.api_key_configured:
-            providers.append(
-                ConfiguredProviderSummary(
-                    provider="openai",
-                    label="OpenAI",
-                    status=openai_settings.status,
-                    model=None,
+        for provider_name in REMOTE_PROVIDERS:
+            provider_settings = remote_settings[provider_name]
+            if provider_settings.api_key_configured:
+                providers.append(
+                    ConfiguredProviderSummary(
+                        provider=provider_name,
+                        label=PROVIDER_LABELS[provider_name],
+                        status=provider_settings.status,
+                        model=None,
+                    )
                 )
-            )
-        if ollama_settings.base_url.strip():
+        if local_settings.base_url.strip():
             providers.append(
                 ConfiguredProviderSummary(
                     provider="local",
-                    label="Ollama",
-                    status=ollama_settings.status,
-                    model=ollama_settings.model,
+                    label=PROVIDER_LABELS["local"],
+                    status=local_settings.status,
+                    model=local_settings.model,
                 )
             )
         return providers
 
-    def _resolve_openai_status(
+    def _resolve_remote_status(
         self,
         payload: dict[str, Any],
         test_results: dict[str, dict[str, str]],
+        provider: Literal["openai", "claude", "gemini"],
     ) -> ProviderTestStatus:
-        if not self._normalize_secret(payload.get("openai_api_key")):
+        if not self._normalize_secret(payload.get(API_KEY_FIELDS[provider])):
             return "missing"
-        status = test_results.get("openai", {}).get("status")
+        status = test_results.get(provider, {}).get("status")
         return status if status in {"configured", "tested", "failed"} else "configured"
 
     def _resolve_local_status(
@@ -296,6 +379,8 @@ class SettingsService:
             "default_provider": "openai",
             "default_model": DEFAULT_OPENAI_MODEL,
             "openai_api_key": None,
+            "anthropic_api_key": None,
+            "gemini_api_key": None,
             "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
             "ollama_model": DEFAULT_OLLAMA_MODEL,
             "provider_test_results": {},
@@ -331,7 +416,9 @@ class SettingsService:
         return f"{secret[:4]}...{secret[-4:]}"
 
     def _coerce_provider(self, value: Any) -> SettingsProvider:
-        return "local" if value == "local" else "openai"
+        if value in {"openai", "claude", "gemini", "local"}:
+            return value
+        return "openai"
 
     def _parse_datetime(self, value: Any) -> datetime | None:
         if not isinstance(value, str):
@@ -346,16 +433,21 @@ settings_service = SettingsService()
 
 
 __all__ = [
+    "AppSettingsProviders",
     "AppSettingsResponse",
     "AppSettingsUpdate",
     "ConfiguredProviderSummary",
+    "DEFAULT_CLAUDE_MODEL",
+    "DEFAULT_GEMINI_MODEL",
     "DEFAULT_OLLAMA_BASE_URL",
     "DEFAULT_OLLAMA_MODEL",
     "DEFAULT_OPENAI_MODEL",
-    "OpenAIProviderSettings",
     "OllamaProviderSettings",
+    "PROVIDER_LABELS",
     "ProviderTestRequest",
     "ProviderTestResponse",
+    "ProviderTestStatus",
+    "RemoteProviderSettings",
     "SettingsProvider",
     "SettingsService",
     "settings_service",

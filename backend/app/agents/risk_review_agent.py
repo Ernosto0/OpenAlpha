@@ -7,7 +7,6 @@ from typing import Any
 
 from backend.app.agents.base import AgentExecutionPayload, BaseAgent
 from backend.app.llm import BaseLLMProvider, LLMProviderError
-from backend.app.llm.providers import OpenAIProvider
 from backend.app.orchestrator.schemas import (
     AnalysisContext,
     BearCaseAgentOutput,
@@ -492,14 +491,6 @@ class RiskReviewAgent(BaseAgent[RiskReviewAgentOutput]):
 
     def _format_datetime(self, value: datetime) -> str:
         return value.isoformat()
-
-    def _create_llm_provider(self, provider_name: str) -> BaseLLMProvider:
-        normalized = provider_name.strip().lower()
-        if normalized == "openai":
-            return OpenAIProvider()
-        raise ValueError(
-            f"Unsupported LLM provider for risk_review_agent: {provider_name}"
-        )
 
     def _dedupe(self, values: Sequence[str]) -> list[str]:
         deduped: dict[str, None] = {}

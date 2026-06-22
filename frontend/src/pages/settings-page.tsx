@@ -14,24 +14,34 @@ import {
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
-import { getModelsForProvider, getProviderLabel } from "../lib/analysis";
+import {
+  getModelOptionsForSelection,
+  getModelsForProvider,
+  getProviderLabel,
+  type AnalysisProvider,
+} from "../lib/analysis";
 import {
   api,
   type AppSettingsUpdate,
   type ProviderStatus,
+  type RuntimeProvider,
 } from "../lib/api";
 import { useAppSettings } from "../lib/settings-context";
 
 type SettingsFormState = {
   openaiApiKey: string;
+  anthropicApiKey: string;
+  geminiApiKey: string;
   ollamaBaseUrl: string;
   ollamaModel: string;
-  defaultProvider: "openai" | "local";
+  defaultProvider: RuntimeProvider;
   defaultModel: string;
 };
 
 const EMPTY_FORM: SettingsFormState = {
   openaiApiKey: "",
+  anthropicApiKey: "",
+  geminiApiKey: "",
   ollamaBaseUrl: "http://localhost:11434",
   ollamaModel: "llama3",
   defaultProvider: "openai",
@@ -45,7 +55,7 @@ export function SettingsPage() {
     status: "idle" | "saving" | "saved" | "error";
     message: string | null;
   }>({ status: "idle", message: null });
-  const [testingProvider, setTestingProvider] = useState<"openai" | "local" | null>(null);
+  const [testingProvider, setTestingProvider] = useState<RuntimeProvider | null>(null);
 
   useEffect(() => {
     if (!settings) {
@@ -54,6 +64,8 @@ export function SettingsPage() {
 
     setFormState({
       openaiApiKey: "",
+      anthropicApiKey: "",
+      geminiApiKey: "",
       ollamaBaseUrl: settings.providers.local.base_url,
       ollamaModel: settings.providers.local.model,
       defaultProvider: settings.default_provider,
@@ -61,17 +73,10 @@ export function SettingsPage() {
     });
   }, [settings]);
 
-  const modelOptions = useMemo(() => {
-    const knownOptions = getModelsForProvider(formState.defaultProvider);
-    if (knownOptions.some((option) => option.value === formState.defaultModel)) {
-      return knownOptions;
-    }
-
-    return [
-      { value: formState.defaultModel, label: `${formState.defaultModel} (saved)` },
-      ...knownOptions,
-    ];
-  }, [formState.defaultModel, formState.defaultProvider]);
+  const modelOptions = useMemo(
+    () => getModelOptionsForSelection(formState.defaultProvider, formState.defaultModel),
+    [formState.defaultModel, formState.defaultProvider],
+  );
 
   function updateField<K extends keyof SettingsFormState>(
     field: K,
@@ -83,9 +88,11 @@ export function SettingsPage() {
     }));
   }
 
-  function handleProviderChange(provider: "openai" | "local") {
+  function handleProviderChange(provider: RuntimeProvider) {
     const nextDefaultModel =
-      provider === "local" ? formState.ollamaModel : getModelsForProvider(provider)[0]?.value ?? "gpt-4.1-mini";
+      provider === "local"
+        ? formState.ollamaModel
+        : getModelsForProvider(provider)[0]?.value ?? "gpt-4.1-mini";
 
     setFormState((current) => ({
       ...current,
@@ -105,6 +112,8 @@ export function SettingsPage() {
           ? formState.ollamaModel.trim()
           : formState.defaultModel.trim(),
       openai_api_key: formState.openaiApiKey.trim() || null,
+      anthropic_api_key: formState.anthropicApiKey.trim() || null,
+      gemini_api_key: formState.geminiApiKey.trim() || null,
       ollama_base_url: formState.ollamaBaseUrl.trim(),
       ollama_model: formState.ollamaModel.trim(),
     };
@@ -115,6 +124,8 @@ export function SettingsPage() {
       setFormState((current) => ({
         ...current,
         openaiApiKey: "",
+        anthropicApiKey: "",
+        geminiApiKey: "",
         defaultModel: response.default_model,
       }));
       setSaveState({
@@ -129,7 +140,7 @@ export function SettingsPage() {
     }
   }
 
-  async function handleProviderTest(provider: "openai" | "local") {
+  async function handleProviderTest(provider: RuntimeProvider) {
     setTestingProvider(provider);
     setSaveState({ status: "idle", message: null });
     try {
@@ -146,6 +157,8 @@ export function SettingsPage() {
   }
 
   const openaiSettings = settings?.providers.openai;
+  const claudeSettings = settings?.providers.claude;
+  const geminiSettings = settings?.providers.gemini;
   const localSettings = settings?.providers.local;
 
   return (
@@ -210,6 +223,100 @@ export function SettingsPage() {
               </div>
               {openaiSettings?.last_test_message ? (
                 <p className="text-xs text-muted-foreground">{openaiSettings.last_test_message}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="claude-key">Claude API Key</Label>
+                <StatusBadge
+                  status={statusLabel(claudeSettings?.status ?? "missing")}
+                  variant={statusVariant(claudeSettings?.status ?? "missing")}
+                />
+              </div>
+              <Input
+                id="claude-key"
+                name="claude-key"
+                placeholder={
+                  claudeSettings?.api_key_masked
+                    ? `Saved: ${claudeSettings.api_key_masked}`
+                    : "sk-ant-..."
+                }
+                type="password"
+                className="font-mono"
+                value={formState.anthropicApiKey}
+                onChange={(event) => updateField("anthropicApiKey", event.target.value)}
+              />
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>
+                  {claudeSettings?.api_key_configured
+                    ? `Stored locally as ${claudeSettings.api_key_masked}. Leave blank to keep it.`
+                    : "No Claude key stored yet."}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="font-mono"
+                  disabled={testingProvider === "claude"}
+                  onClick={() => void handleProviderTest("claude")}
+                >
+                  {testingProvider === "claude" ? (
+                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <TestTube2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  )}
+                  Test Claude
+                </Button>
+              </div>
+              {claudeSettings?.last_test_message ? (
+                <p className="text-xs text-muted-foreground">{claudeSettings.last_test_message}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="gemini-key">Gemini API Key</Label>
+                <StatusBadge
+                  status={statusLabel(geminiSettings?.status ?? "missing")}
+                  variant={statusVariant(geminiSettings?.status ?? "missing")}
+                />
+              </div>
+              <Input
+                id="gemini-key"
+                name="gemini-key"
+                placeholder={
+                  geminiSettings?.api_key_masked
+                    ? `Saved: ${geminiSettings.api_key_masked}`
+                    : "AIza..."
+                }
+                type="password"
+                className="font-mono"
+                value={formState.geminiApiKey}
+                onChange={(event) => updateField("geminiApiKey", event.target.value)}
+              />
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>
+                  {geminiSettings?.api_key_configured
+                    ? `Stored locally as ${geminiSettings.api_key_masked}. Leave blank to keep it.`
+                    : "No Gemini key stored yet."}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="font-mono"
+                  disabled={testingProvider === "gemini"}
+                  onClick={() => void handleProviderTest("gemini")}
+                >
+                  {testingProvider === "gemini" ? (
+                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <TestTube2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  )}
+                  Test Gemini
+                </Button>
+              </div>
+              {geminiSettings?.last_test_message ? (
+                <p className="text-xs text-muted-foreground">{geminiSettings.last_test_message}</p>
               ) : null}
             </div>
           </CardContent>
@@ -295,9 +402,11 @@ export function SettingsPage() {
                 id="default-provider"
                 name="default-provider"
                 value={formState.defaultProvider}
-                onChange={(event) => handleProviderChange(event.target.value as "openai" | "local")}
+                onChange={(event) => handleProviderChange(event.target.value as AnalysisProvider)}
               >
                 <option value="openai">OpenAI</option>
+                <option value="claude">Claude</option>
+                <option value="gemini">Gemini</option>
                 <option value="local">Ollama</option>
               </Select>
             </div>

@@ -142,7 +142,11 @@ async def test_analysis_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "backend.app.api.routes.analysis.settings_service.get_settings",
         lambda: SimpleNamespace(
-            providers={"openai": SimpleNamespace(api_key_configured=True)}
+            providers=SimpleNamespace(
+                openai=SimpleNamespace(api_key_configured=True),
+                claude=SimpleNamespace(api_key_configured=True),
+                gemini=SimpleNamespace(api_key_configured=True),
+            )
         ),
     )
 
@@ -198,7 +202,11 @@ async def test_analysis_run_requires_openai_key(
     monkeypatch.setattr(
         "backend.app.api.routes.analysis.settings_service.get_settings",
         lambda: SimpleNamespace(
-            providers={"openai": SimpleNamespace(api_key_configured=False)}
+            providers=SimpleNamespace(
+                openai=SimpleNamespace(api_key_configured=False),
+                claude=SimpleNamespace(api_key_configured=True),
+                gemini=SimpleNamespace(api_key_configured=True),
+            )
         ),
     )
 
@@ -226,6 +234,110 @@ async def test_analysis_run_requires_openai_key(
         create_response.json()["detail"]
         == "OpenAI API key is missing. Add it in Settings before running analysis."
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("provider", "detail"),
+    [
+        (
+            "claude",
+            "Claude API key is missing. Add it in Settings before running analysis.",
+        ),
+        (
+            "gemini",
+            "Gemini API key is missing. Add it in Settings before running analysis.",
+        ),
+    ],
+)
+async def test_analysis_run_requires_remote_provider_key(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    detail: str,
+) -> None:
+    manager = build_test_manager()
+    monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_settings",
+        lambda: SimpleNamespace(
+            providers=SimpleNamespace(
+                openai=SimpleNamespace(api_key_configured=True),
+                claude=SimpleNamespace(api_key_configured=provider != "claude"),
+                gemini=SimpleNamespace(api_key_configured=provider != "gemini"),
+            )
+        ),
+    )
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    request_payload = {
+        "symbol": "AAPL",
+        "market": "US",
+        "horizon": "3m",
+        "depth": "standard",
+        "language": "en",
+        "llm_provider": provider,
+        "llm_model": "test-model",
+        "custom_question": None,
+    }
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        create_response = await client.post("/api/analysis/run", json=request_payload)
+
+    assert create_response.status_code == 400
+    assert create_response.json()["detail"] == detail
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("claude", "claude-3-5-sonnet-latest"),
+        ("gemini", "gemini-2.5-pro"),
+    ],
+)
+async def test_analysis_run_accepts_configured_remote_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    model: str,
+) -> None:
+    manager = build_test_manager()
+    monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_settings",
+        lambda: SimpleNamespace(
+            providers=SimpleNamespace(
+                openai=SimpleNamespace(api_key_configured=True),
+                claude=SimpleNamespace(api_key_configured=True),
+                gemini=SimpleNamespace(api_key_configured=True),
+            )
+        ),
+    )
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    request_payload = {
+        "symbol": "AAPL",
+        "market": "US",
+        "horizon": "3m",
+        "depth": "standard",
+        "language": "en",
+        "llm_provider": provider,
+        "llm_model": model,
+        "custom_question": None,
+    }
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        create_response = await client.post("/api/analysis/run", json=request_payload)
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "running"
 
 
 @pytest.mark.anyio

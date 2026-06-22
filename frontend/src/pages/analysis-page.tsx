@@ -34,6 +34,8 @@ import {
   MARKET_OPTIONS,
   formatAgentName,
   formatOverallView,
+  getModelOptionsForSelection,
+  getProviderLabel,
   getModelsForProvider,
   toRiskBadgeLevel,
   type AnalysisProvider,
@@ -341,13 +343,21 @@ export function AnalysisPage() {
     };
   }, [runDetail?.report_id]);
 
-  const modelOptions = getModelsForProvider(formState.llm_provider);
-  const isOpenAiReady = settings?.providers.openai.api_key_configured ?? false;
+  const modelOptions = getModelOptionsForSelection(
+    formState.llm_provider,
+    formState.llm_model,
+  );
   const isSelectedProviderReady =
-    formState.llm_provider === "openai" ? isOpenAiReady : true;
+    formState.llm_provider === "openai"
+      ? (settings?.providers.openai.api_key_configured ?? false)
+      : formState.llm_provider === "claude"
+        ? (settings?.providers.claude.api_key_configured ?? false)
+        : formState.llm_provider === "gemini"
+          ? (settings?.providers.gemini.api_key_configured ?? false)
+          : true;
   const providerValidationMessage =
-    formState.llm_provider === "openai" && !isSelectedProviderReady
-      ? "Add an OpenAI API key in Settings before running analysis with OpenAI."
+    !isSelectedProviderReady && formState.llm_provider !== "local"
+      ? `Add a ${getProviderLabel(formState.llm_provider)} API key in Settings before running analysis with ${getProviderLabel(formState.llm_provider)}.`
       : null;
 
   const summarySymbol = runDetail?.symbol ?? selectedRequest?.symbol ?? "Not selected";
@@ -525,6 +535,8 @@ export function AnalysisPage() {
                     onChange={(event) => handleProviderChange(event.target.value as AnalysisProvider)}
                   >
                     <option value="openai">OpenAI</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
                     <option value="local">Ollama</option>
                   </Select>
                   {providerValidationMessage ? (
