@@ -10,10 +10,13 @@ import {
 import { Link, useParams } from "react-router-dom";
 
 import { PageHeader } from "../components/page-header";
+import { ReportDashboard } from "../components/report/report-dashboard";
 import { AgentTimeline, type AgentRun } from "../components/shared/agent-timeline";
 import { CostBreakdown } from "../components/shared/cost-breakdown";
 import { DataQualityBar } from "../components/shared/data-quality-bar";
 import { RiskBadge, StatusBadge } from "../components/shared/status-badges";
+import { TradingChart } from "../components/shared/trading-chart";
+import { extractTradingHistory } from "../components/shared/trading-chart-data";
 import { Button } from "../components/ui/button";
 import { buttonVariants } from "../components/ui/button-styles";
 import {
@@ -417,6 +420,10 @@ export function AnalysisPage() {
     () => parseFinalReport(reportDetail?.final_report ?? null),
     [reportDetail],
   );
+  const tradingHistory = useMemo(
+    () => extractTradingHistory(reportDetail),
+    [reportDetail],
+  );
 
   function updateField<K extends keyof AnalysisRequest>(
     field: K,
@@ -775,181 +782,25 @@ export function AnalysisPage() {
       </div>
 
       <div className="mt-6">
-        <Card className="bg-card shadow-panel">
-          <CardHeader className="border-b border-border pb-4">
-            <CardTitle>Final Report</CardTitle>
-            <CardDescription>Inline final report rendered from the persisted backend result.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 pt-6">
-            {isReportLoading ? (
-              <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-                Loading final report...
-              </div>
-            ) : reportError ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {reportError}
-              </div>
-            ) : !reportDetail || !finalReport ? (
-              <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-                Final report will appear when the run completes.
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div>
-                    <h2 className="text-2xl font-semibold">
-                      {finalReport.title ?? `${reportDetail.symbol} Equity Research Report`}
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      {finalReport.companyName ?? reportDetail.symbol} · {new Date(reportDetail.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <StatusBadge
-                      status={formatOverallView(finalReport.overallView ?? reportDetail.overall_view)}
-                      variant={viewVariant(finalReport.overallView ?? reportDetail.overall_view)}
-                    />
-                    <RiskBadge level={toRiskBadgeLevel(finalReport.riskLevel ?? reportDetail.risk_level)} />
-                    <StatusBadge
-                      status={formatHorizon(finalReport.horizon ?? reportDetail.horizon)}
-                      variant="secondary"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-5">
-                  <MetricPanel
-                    label="Confidence"
-                    value={formatPercent(finalReport.confidence)}
-                  />
-                  <MetricPanel
-                    label="Current Price"
-                    value={
-                      finalReport.currentPrice != null
-                        ? formatUsd(finalReport.currentPrice)
-                        : "-"
-                    }
-                  />
-                  <MetricPanel
-                    label="Risk Score"
-                    value={finalReport.riskScore != null ? `${Math.round(finalReport.riskScore)}/100` : "-"}
-                  />
-                  <MetricPanel
-                    label="Total Cost"
-                    value={formatUsd(reportDetail.cost_breakdown.total_cost_usd)}
-                  />
-                  <MetricPanel
-                    label="Data Quality"
-                    value={
-                      finalReport.dataQualityScore != null
-                        ? `${Math.round(finalReport.dataQualityScore * 100)}%`
-                        : "-"
-                    }
-                  />
-                </div>
-
-                {finalReport.dataQualityScore != null ? (
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">Data Quality</h3>
-                    <DataQualityBar score={Math.round(finalReport.dataQualityScore * 100)} />
-                    <p className="text-sm text-muted-foreground">
-                      Price: {finalReport.priceDataStatus ?? "unknown"} · News: {finalReport.newsDataStatus ?? "unknown"} · Profile: {finalReport.companyProfileStatus ?? "unknown"}
-                    </p>
-                  </div>
-                ) : null}
-
-                <ReportSection
-                  title="Executive Summary"
-                  body={finalReport.executiveSummary}
-                />
-                <ReportSection
-                  title="Investment Thesis"
-                  body={finalReport.investmentThesis}
-                />
-                <ReportSection title="Base Case" body={finalReport.baseCase} />
-                <ReportSection
-                  title="Bull Case"
-                  body={finalReport.bullCaseSummary}
-                />
-                <ReportSection
-                  title="Bear Case"
-                  body={finalReport.bearCaseSummary}
-                />
-
-                {finalReport.whatToWatch.length ? (
-                  <ListSection title="What To Watch" items={finalReport.whatToWatch} />
-                ) : null}
-                {finalReport.mainRisks.length ? (
-                  <ListSection title="Main Risks" items={finalReport.mainRisks} />
-                ) : null}
-                {finalReport.invalidationConditions.length ? (
-                  <ListSection
-                    title="Invalidation Conditions"
-                    items={finalReport.invalidationConditions}
-                  />
-                ) : null}
-                {finalReport.missingData.length ? (
-                  <ListSection title="Missing Data" items={finalReport.missingData} />
-                ) : null}
-                {finalReport.providers.length ? (
-                  <ListSection title="Providers" items={finalReport.providers} />
-                ) : null}
-                {finalReport.warnings.length ? (
-                  <ListSection title="Warnings" items={finalReport.warnings} />
-                ) : null}
-                {finalReport.dataWarnings.length ? (
-                  <ListSection title="Data Warnings" items={finalReport.dataWarnings} />
-                ) : null}
-
-                {finalReport.sources.length ? (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-semibold">Sources</h3>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {finalReport.sources.map((source) => (
-                        <div
-                          key={`${source.provider}-${source.name}-${source.usedFor}`}
-                          className="rounded-lg border border-border bg-muted/20 p-3"
-                        >
-                          <p className="font-medium">{source.name}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {source.provider} · {source.usedFor}
-                          </p>
-                          {source.url ? (
-                            <a
-                              className="mt-2 inline-flex text-sm font-mono text-primary underline-offset-4 hover:underline"
-                              href={source.url}
-                              rel="noreferrer"
-                              target="_blank"
-                            >
-                              Open Source
-                            </a>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                {finalReport.reportMarkdown ? (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-semibold">Rendered Report</h3>
-                    <div className="rounded-lg border border-border bg-muted/20 p-4">
-                      <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-foreground">
-                        {finalReport.reportMarkdown}
-                      </pre>
-                    </div>
-                  </div>
-                ) : null}
-
-                {finalReport.disclaimer ? (
-                  <div className="rounded-lg border border-border bg-muted/20 p-4 text-xs leading-6 text-muted-foreground">
-                    <strong>Disclaimer:</strong> {finalReport.disclaimer}
-                  </div>
-                ) : null}
-              </>
-            )}
-          </CardContent>
-        </Card>
+        {isReportLoading ? (
+          <Card className="bg-card shadow-panel">
+            <CardContent className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+              Loading final report...
+            </CardContent>
+          </Card>
+        ) : reportError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {reportError}
+          </div>
+        ) : !reportDetail || !finalReport ? (
+          <Card className="bg-card shadow-panel">
+            <CardContent className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+              Final report will appear when the run completes.
+            </CardContent>
+          </Card>
+        ) : (
+          <ReportDashboard report={reportDetail} />
+        )}
       </div>
     </>
   );
