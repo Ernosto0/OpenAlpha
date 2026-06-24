@@ -22,6 +22,12 @@ def test_initial_migration_creates_phase_three_tables(tmp_path) -> None:
     assert "reports" in table_names
     assert "cost_traces" in table_names
 
+    agent_output_columns = {column["name"] for column in inspector.get_columns("agent_outputs")}
+    cost_trace_columns = {column["name"] for column in inspector.get_columns("cost_traces")}
+
+    assert {"provider", "model", "cost_type", "warnings_json", "parsing_errors_json", "duration_ms"} <= agent_output_columns
+    assert {"cost_type", "warnings_json", "parsing_errors_json", "duration_ms"} <= cost_trace_columns
+
 
 def test_initial_migration_records_applied_version(tmp_path) -> None:
     database_url = f"sqlite:///{tmp_path / 'openalpha.db'}"
@@ -35,4 +41,7 @@ def test_initial_migration_records_applied_version(tmp_path) -> None:
             "SELECT version FROM schema_migrations ORDER BY version"
         ).all()
 
-    assert rows == [("0001_initial_sqlite_schema",)]
+    assert rows == [
+        ("0001_initial_sqlite_schema",),
+        ("0002_enrich_llm_telemetry",),
+    ]

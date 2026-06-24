@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
@@ -17,6 +18,11 @@ TModel = TypeVar("TModel", bound=BaseModel)
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def normalize_provider_name(provider_name: str) -> str:
+    normalized = provider_name.strip().lower()
+    return "ollama" if normalized == "local" else normalized
 
 
 class LLMProviderError(Exception):
@@ -65,6 +71,32 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(default=0, ge=0)
 
 
+class LLMHealthCheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=64)
+    available: bool
+    message: str = Field(min_length=1, max_length=500)
+    checked_at: datetime = Field(default_factory=utc_now)
+    base_url: str | None = Field(default=None, max_length=300)
+    raw_response: dict[str, Any] | None = None
+
+
+class LLMModelInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=160)
+    provider: str = Field(min_length=1, max_length=64)
+    installed: bool = True
+    size_bytes: int | None = Field(default=None, ge=0)
+    family: str | None = Field(default=None, max_length=120)
+    parameter_size: str | None = Field(default=None, max_length=120)
+    quantization_level: str | None = Field(default=None, max_length=120)
+    modified_at: datetime | None = None
+    raw: dict[str, Any] | None = None
+
+
 class LLMResult(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
@@ -78,6 +110,8 @@ class LLMResult(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0, ge=0)
+    cost_type: str = Field(default="api", min_length=1, max_length=64)
+    duration_ms: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
     warnings: list[str] = Field(default_factory=list)
     parsing_errors: list[str] = Field(default_factory=list)
@@ -91,14 +125,20 @@ class LLMResult(BaseModel):
         model: str,
         agent_name: str,
         error_message: str,
+        cost_type: str = "api",
+        duration_ms: int = 0,
         warnings: Sequence[str] = (),
+        parsing_errors: Sequence[str] = (),
     ) -> "LLMResult":
         return cls(
             provider=provider,
             model=model,
             agent_name=agent_name,
             error_message=error_message,
+            cost_type=cost_type,
+            duration_ms=duration_ms,
             warnings=list(warnings),
+            parsing_errors=list(parsing_errors),
         )
 
 
@@ -120,6 +160,16 @@ class BaseLLMProvider(ABC):
         self.default_model = default_model
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
+
+    async def health_check(self) -> LLMHealthCheckResult:
+        return LLMHealthCheckResult(
+            provider=self.provider_name,
+            available=False,
+            message=f"{self.provider_name} does not expose a health check.",
+        )
+
+    async def list_models(self) -> list[LLMModelInfo]:
+        return []
 
     @abstractmethod
     async def generate(
@@ -250,6 +300,18 @@ class BaseLLMProvider(ABC):
         if last_error is not None:
             raise last_error
         raise LLMProviderError("LLM operation failed without an error")
+
+    def estimate_tokens(self, text: str) -> int:
+        stripped = text.strip()
+        if not stripped:
+            return 0
+        return max(1, len(stripped) // 4)
+
+    def start_timer(self) -> float:
+        return time.perf_counter()
+
+    def elapsed_ms(self, started_at: float) -> int:
+        return max(0, int(round((time.perf_counter() - started_at) * 1000)))
 
 
 def should_stop_analysis_for_llm_error(exc: LLMProviderError) -> bool:

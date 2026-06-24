@@ -77,7 +77,7 @@ def test_report_writer_agent_returns_partial_report_when_llm_fails() -> None:
     )
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.final_report is not None
     assert context.final_report.investment_thesis == "Balanced thesis."
     assert any("LLM request failed" in warning for warning in result.warnings)

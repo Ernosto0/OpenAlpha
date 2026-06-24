@@ -163,7 +163,7 @@ def test_news_sentiment_agent_returns_partial_output_when_news_is_missing() -> N
     result = asyncio.run(NewsSentimentAgent().run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert isinstance(context.news_sentiment_output, NewsSentimentOutput)
     assert context.news_sentiment_output.view == "insufficient_data"
@@ -190,7 +190,7 @@ def test_news_sentiment_agent_returns_partial_output_when_llm_fails() -> None:
     )
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.news_sentiment_output is not None
     assert context.news_sentiment_output.view == "insufficient_data"
     assert any("LLM request failed" in warning for warning in result.warnings)

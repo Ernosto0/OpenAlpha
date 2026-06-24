@@ -32,7 +32,7 @@ export const PROVIDER_MODEL_OPTIONS = {
     { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
     { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
   ],
-  local: [
+  ollama: [
     { value: "llama3", label: "llama3" },
   ],
 } as const;
@@ -70,7 +70,7 @@ export function getProviderLabel(provider: string) {
       return "Claude";
     case "gemini":
       return "Gemini";
-    case "local":
+    case "ollama":
       return "Ollama";
     default:
       return provider;

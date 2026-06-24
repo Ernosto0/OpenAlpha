@@ -341,6 +341,88 @@ async def test_analysis_run_accepts_configured_remote_provider(
 
 
 @pytest.mark.anyio
+async def test_analysis_run_accepts_ollama_when_runtime_and_model_are_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_test_manager()
+    monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_ollama_runtime_config",
+        lambda **_kwargs: ("http://localhost:11434", "llama3.1"),
+    )
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.build_ollama_provider",
+        lambda **_kwargs: SimpleNamespace(
+            health_check=lambda: asyncio.sleep(0, result=SimpleNamespace(available=True, message="ok")),
+            list_models=lambda: asyncio.sleep(
+                0,
+                result=[SimpleNamespace(id="llama3.1")],
+            ),
+        ),
+    )
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    request_payload = {
+        "symbol": "AAPL",
+        "market": "US",
+        "horizon": "3m",
+        "depth": "standard",
+        "language": "en",
+        "llm_provider": "ollama",
+        "llm_model": "llama3.1",
+        "custom_question": None,
+    }
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_response = await client.post("/api/analysis/run", json=request_payload)
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "running"
+
+
+@pytest.mark.anyio
+async def test_analysis_run_rejects_missing_ollama_model_before_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_test_manager()
+    monkeypatch.setattr("backend.app.api.routes.analysis.analysis_manager", manager)
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.get_ollama_runtime_config",
+        lambda **_kwargs: ("http://localhost:11434", "llama3.2"),
+    )
+    monkeypatch.setattr(
+        "backend.app.api.routes.analysis.settings_service.build_ollama_provider",
+        lambda **_kwargs: SimpleNamespace(
+            health_check=lambda: asyncio.sleep(0, result=SimpleNamespace(available=True, message="ok")),
+            list_models=lambda: asyncio.sleep(
+                0,
+                result=[SimpleNamespace(id="llama3.1")],
+            ),
+        ),
+    )
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    request_payload = {
+        "symbol": "AAPL",
+        "market": "US",
+        "horizon": "3m",
+        "depth": "standard",
+        "language": "en",
+        "llm_provider": "ollama",
+        "llm_model": "llama3.2",
+        "custom_question": None,
+    }
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_response = await client.post("/api/analysis/run", json=request_payload)
+
+    assert create_response.status_code == 400
+    assert "selected model 'llama3.2' is unavailable" in create_response.json()["detail"]
+
+
+@pytest.mark.anyio
 async def test_analysis_endpoints_return_404_for_missing_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

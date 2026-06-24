@@ -189,7 +189,7 @@ def test_risk_review_agent_returns_partial_output_when_inputs_are_missing() -> N
     result = asyncio.run(RiskReviewAgent().run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert isinstance(context.risk_review_output, RiskReviewAgentOutput)
     assert context.risk_review_output.risk_level == "insufficient_data"
@@ -217,7 +217,7 @@ def test_risk_review_agent_returns_partial_output_when_llm_fails() -> None:
     result = asyncio.run(RiskReviewAgent(llm_provider=FailingLLMProvider()).run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.risk_review_output is not None
     assert context.risk_review_output.risk_level == "insufficient_data"
     assert any("LLM request failed" in warning for warning in result.warnings)

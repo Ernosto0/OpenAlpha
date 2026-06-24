@@ -165,7 +165,7 @@ def test_bear_case_agent_returns_partial_output_when_inputs_are_missing() -> Non
     result = asyncio.run(BearCaseAgent().run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert isinstance(context.bear_case_output, BearCaseAgentOutput)
     assert "cannot be formed" in context.bear_case_output.bear_case
@@ -192,7 +192,7 @@ def test_bear_case_agent_returns_partial_output_when_llm_fails() -> None:
     result = asyncio.run(BearCaseAgent(llm_provider=FailingLLMProvider()).run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.bear_case_output is not None
     assert any("LLM request failed" in warning for warning in result.warnings)
 

@@ -15,7 +15,7 @@ Current runtime truth:
 - market data has several implemented providers
 - news uses a multi-provider aggregation service
 - the shipped remote LLM runtimes are OpenAI, Claude, and Gemini
-- the UI and settings layer expose Ollama/local fields, but the active agent factories do not support that local runtime yet
+- Ollama is a first-class local runtime provider using the canonical provider id `ollama` while still accepting legacy `local` settings payloads during rollout
 
 ## Market Data Providers
 

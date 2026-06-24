@@ -151,7 +151,7 @@ def build_test_service() -> PerformanceService:
                     id="trace_3",
                     analysis_run_id="run_3",
                     agent_name="data_collector",
-                    provider="local",
+                    provider="deterministic",
                     model="deterministic",
                     input_tokens=0,
                     output_tokens=0,

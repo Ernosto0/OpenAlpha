@@ -205,7 +205,7 @@ def test_thesis_agent_returns_partial_output_when_inputs_are_missing() -> None:
     result = asyncio.run(ThesisAgent().run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert isinstance(context.thesis_output, ThesisAgentOutput)
     assert context.thesis_output.overall_view == "insufficient_data"
@@ -221,7 +221,7 @@ def test_thesis_agent_returns_partial_output_when_llm_fails() -> None:
     result = asyncio.run(ThesisAgent(llm_provider=FailingLLMProvider()).run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.thesis_output is not None
     assert context.thesis_output.overall_view == "insufficient_data"
     assert any("LLM request failed" in warning for warning in result.warnings)

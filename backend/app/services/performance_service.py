@@ -307,7 +307,7 @@ class PerformanceService:
         if not traces:
             return "unknown"
 
-        non_local = [trace for trace in traces if trace.provider != "local"]
+        non_local = [trace for trace in traces if trace.cost_type != "deterministic"]
         preferred = [
             trace
             for trace in non_local

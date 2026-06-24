@@ -39,6 +39,8 @@ class AgentExecutionPayload(OpenAlphaSchema):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0, ge=0)
+    cost_type: str = Field(default="api", min_length=1, max_length=64)
+    duration_ms: int = Field(default=0, ge=0)
     output: Any | None = None
     data_used: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -94,6 +96,8 @@ class BaseAgent(ABC, Generic[OutputT]):
                 input_tokens=payload.input_tokens,
                 output_tokens=payload.output_tokens,
                 estimated_cost_usd=payload.estimated_cost_usd,
+                cost_type=payload.cost_type,
+                duration_ms=payload.duration_ms,
                 started_at=started_at,
                 finished_at=utc_now(),
                 output=output,
@@ -185,6 +189,8 @@ class BaseAgent(ABC, Generic[OutputT]):
             input_tokens=payload.input_tokens if payload else 0,
             output_tokens=payload.output_tokens if payload else 0,
             estimated_cost_usd=payload.estimated_cost_usd if payload else 0,
+            cost_type=payload.cost_type if payload else "api",
+            duration_ms=payload.duration_ms if payload else 0,
             started_at=started_at,
             finished_at=utc_now(),
             data_used=payload.data_used if payload else [],
@@ -205,6 +211,10 @@ class BaseAgent(ABC, Generic[OutputT]):
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
                 estimated_cost_usd=result.estimated_cost_usd,
+                cost_type=result.cost_type,
+                duration_ms=result.duration_ms,
+                warnings=result.warnings,
+                parsing_errors=result.parsing_errors,
             )
         )
         context.updated_at = result.finished_at or utc_now()

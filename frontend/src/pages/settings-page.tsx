@@ -23,6 +23,7 @@ import {
 import {
   api,
   type AppSettingsUpdate,
+  type OllamaModelInfo,
   type ProviderStatus,
   type RuntimeProvider,
 } from "../lib/api";
@@ -56,6 +57,7 @@ export function SettingsPage() {
     message: string | null;
   }>({ status: "idle", message: null });
   const [testingProvider, setTestingProvider] = useState<RuntimeProvider | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
 
   useEffect(() => {
     if (!settings) {
@@ -66,12 +68,38 @@ export function SettingsPage() {
       openaiApiKey: "",
       anthropicApiKey: "",
       geminiApiKey: "",
-      ollamaBaseUrl: settings.providers.local.base_url,
-      ollamaModel: settings.providers.local.model,
+      ollamaBaseUrl: settings.providers.ollama.base_url,
+      ollamaModel: settings.providers.ollama.model,
       defaultProvider: settings.default_provider,
       defaultModel: settings.default_model,
     });
   }, [settings]);
+
+  useEffect(() => {
+    const baseUrl = formState.ollamaBaseUrl.trim();
+    if (!baseUrl) {
+      setOllamaModels([]);
+      return;
+    }
+
+    let active = true;
+    api
+      .listOllamaModels(baseUrl)
+      .then((models) => {
+        if (active) {
+          setOllamaModels(models);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOllamaModels([]);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [formState.ollamaBaseUrl]);
 
   const modelOptions = useMemo(
     () => getModelOptionsForSelection(formState.defaultProvider, formState.defaultModel),
@@ -90,7 +118,7 @@ export function SettingsPage() {
 
   function handleProviderChange(provider: RuntimeProvider) {
     const nextDefaultModel =
-      provider === "local"
+      provider === "ollama"
         ? formState.ollamaModel
         : getModelsForProvider(provider)[0]?.value ?? "gpt-4.1-mini";
 
@@ -101,6 +129,23 @@ export function SettingsPage() {
     }));
   }
 
+  const ollamaModelOptions = useMemo(() => {
+    const knownOptions = ollamaModels.map((model) => ({
+      value: model.id,
+      label: model.id,
+    }));
+    if (knownOptions.some((option) => option.value === formState.ollamaModel)) {
+      return knownOptions;
+    }
+    if (!formState.ollamaModel.trim()) {
+      return knownOptions;
+    }
+    return [
+      { value: formState.ollamaModel, label: `${formState.ollamaModel} (saved)` },
+      ...knownOptions,
+    ];
+  }, [formState.ollamaModel, ollamaModels]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaveState({ status: "saving", message: null });
@@ -108,7 +153,7 @@ export function SettingsPage() {
     const payload: AppSettingsUpdate = {
       default_provider: formState.defaultProvider,
       default_model:
-        formState.defaultProvider === "local"
+        formState.defaultProvider === "ollama"
           ? formState.ollamaModel.trim()
           : formState.defaultModel.trim(),
       openai_api_key: formState.openaiApiKey.trim() || null,
@@ -144,7 +189,11 @@ export function SettingsPage() {
     setTestingProvider(provider);
     setSaveState({ status: "idle", message: null });
     try {
-      await api.testProvider(provider);
+      await api.testProvider({
+        provider,
+        base_url: provider === "ollama" ? formState.ollamaBaseUrl.trim() : undefined,
+        model: provider === "ollama" ? formState.ollamaModel.trim() : undefined,
+      });
       await refresh();
     } catch {
       setSaveState({
@@ -159,7 +208,7 @@ export function SettingsPage() {
   const openaiSettings = settings?.providers.openai;
   const claudeSettings = settings?.providers.claude;
   const geminiSettings = settings?.providers.gemini;
-  const localSettings = settings?.providers.local;
+  const ollamaSettings = settings?.providers.ollama;
 
   return (
     <>
@@ -335,8 +384,8 @@ export function SettingsPage() {
               <div className="flex items-center justify-between gap-3">
                 <Label htmlFor="ollama-base-url">Ollama Base URL</Label>
                 <StatusBadge
-                  status={statusLabel(localSettings?.status ?? "untested")}
-                  variant={statusVariant(localSettings?.status ?? "untested")}
+                  status={statusLabel(ollamaSettings?.status ?? "untested")}
+                  variant={statusVariant(ollamaSettings?.status ?? "untested")}
                 />
               </div>
               <Input
@@ -350,10 +399,9 @@ export function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="ollama-model">Ollama Model</Label>
-              <Input
+              <Select
                 id="ollama-model"
                 name="ollama-model"
-                className="font-mono"
                 value={formState.ollamaModel}
                 onChange={(event) => {
                   const nextModel = event.target.value;
@@ -361,25 +409,31 @@ export function SettingsPage() {
                     ...current,
                     ollamaModel: nextModel,
                     defaultModel:
-                      current.defaultProvider === "local" ? nextModel : current.defaultModel,
+                      current.defaultProvider === "ollama" ? nextModel : current.defaultModel,
                   }));
                 }}
-              />
+              >
+                {ollamaModelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
             </div>
 
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>
-                {localSettings?.last_test_message ??
-                  "Live Ollama connectivity test is not implemented in this version."}
+                {ollamaSettings?.last_test_message ??
+                  "Live installed models are fetched from the configured Ollama runtime."}
               </span>
               <Button
                 type="button"
                 variant="secondary"
                 className="font-mono"
-                disabled={testingProvider === "local"}
-                onClick={() => void handleProviderTest("local")}
+                disabled={testingProvider === "ollama"}
+                onClick={() => void handleProviderTest("ollama")}
               >
-                {testingProvider === "local" ? (
+                {testingProvider === "ollama" ? (
                   <LoaderCircle className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
                 ) : (
                   <TestTube2 className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -407,17 +461,16 @@ export function SettingsPage() {
                 <option value="openai">OpenAI</option>
                 <option value="claude">Claude</option>
                 <option value="gemini">Gemini</option>
-                <option value="local">Ollama</option>
+                <option value="ollama">Ollama</option>
               </Select>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="default-model">Default Model</Label>
-              {formState.defaultProvider === "local" ? (
-                <Input
+              {formState.defaultProvider === "ollama" ? (
+                <Select
                   id="default-model"
                   name="default-model"
-                  className="font-mono"
                   value={formState.ollamaModel}
                   onChange={(event) => {
                     const nextModel = event.target.value;
@@ -427,7 +480,13 @@ export function SettingsPage() {
                       defaultModel: nextModel,
                     }));
                   }}
-                />
+                >
+                  {ollamaModelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
               ) : (
                 <Select
                   id="default-model"

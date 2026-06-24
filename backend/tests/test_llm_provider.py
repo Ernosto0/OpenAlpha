@@ -12,9 +12,15 @@ from backend.app.core.secrets import get_provider_api_key
 from backend.app.llm import (
     LLMConfigurationError,
     LLMProviderError,
+    create_llm_provider,
     should_stop_analysis_for_llm_error,
 )
-from backend.app.llm.providers import AnthropicProvider, GeminiProvider, OpenAIProvider
+from backend.app.llm.providers import (
+    AnthropicProvider,
+    GeminiProvider,
+    OllamaProvider,
+    OpenAIProvider,
+)
 
 
 class ExampleOutput(BaseModel):
@@ -505,3 +511,133 @@ def test_quota_and_auth_errors_stop_analysis() -> None:
     assert not should_stop_analysis_for_llm_error(
         LLMProviderError("OpenAI API returned HTTP 400: invalid response format")
     )
+
+
+def test_create_llm_provider_accepts_ollama_alias() -> None:
+    provider = create_llm_provider(
+        "local",
+        default_model="llama3.1",
+        ollama_base_url="http://localhost:11434",
+    )
+
+    assert isinstance(provider, OllamaProvider)
+    assert provider.provider_name == "ollama"
+
+
+def test_ollama_health_and_model_listing() -> None:
+    async def transport(
+        method: str,
+        url: str,
+        _headers: dict[str, str],
+        _payload: dict[str, Any] | None,
+        _timeout_seconds: float,
+    ) -> dict[str, Any]:
+        assert method == "GET"
+        assert url == "http://localhost:11434/api/tags"
+        return {
+            "models": [
+                {
+                    "name": "llama3.1",
+                    "model": "llama3.1",
+                    "size": 1024,
+                    "details": {
+                        "family": "llama",
+                        "parameter_size": "8B",
+                        "quantization_level": "Q4_K_M",
+                    },
+                }
+            ]
+        }
+
+    provider = OllamaProvider(
+        base_url="http://localhost:11434",
+        default_model="llama3.1",
+        transport=transport,
+    )
+    health = asyncio.run(provider.health_check())
+    models = asyncio.run(provider.list_models())
+
+    assert health.available is True
+    assert models[0].id == "llama3.1"
+    assert models[0].family == "llama"
+
+
+def test_ollama_generate_and_generate_json() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def transport(
+        method: str,
+        url: str,
+        _headers: dict[str, str],
+        payload: dict[str, Any] | None,
+        _timeout_seconds: float,
+    ) -> dict[str, Any]:
+        calls.append({"method": method, "url": url, "payload": payload})
+        if payload and payload.get("format"):
+            return {
+                "message": {"content": '{"rating": "ok", "score": 0.85}'},
+                "prompt_eval_count": 25,
+                "eval_count": 10,
+            }
+        return {
+            "message": {"content": "plain text"},
+            "prompt_eval_count": 12,
+            "eval_count": 5,
+        }
+
+    provider = OllamaProvider(
+        base_url="http://localhost:11434",
+        default_model="llama3.1",
+        retry_backoff_seconds=0,
+        transport=transport,
+    )
+    text_result = asyncio.run(
+        provider.generate(messages=[{"role": "user", "content": "hello"}])
+    )
+    json_result = asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "analyze"}],
+            output_schema=ExampleOutput,
+        )
+    )
+
+    assert text_result.content == "plain text"
+    assert text_result.cost_type == "local"
+    assert text_result.estimated_cost_usd == 0
+    assert isinstance(json_result.content, ExampleOutput)
+    assert json_result.content.score == pytest.approx(0.85)
+    assert json_result.cost_type == "local"
+    assert calls[1]["payload"]["format"]["type"] == "json_schema"
+
+
+def test_ollama_generate_json_returns_warnings_after_retry_failure() -> None:
+    call_count = 0
+
+    async def transport(*_args: Any) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        return {
+            "message": {"content": '{"rating": "", "score": 2}'},
+            "prompt_eval_count": 25,
+            "eval_count": 10,
+        }
+
+    provider = OllamaProvider(
+        base_url="http://localhost:11434",
+        default_model="llama3.1",
+        retry_backoff_seconds=0,
+        transport=transport,
+    )
+
+    result = asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "analyze"}],
+            output_schema=ExampleOutput,
+        )
+    )
+
+    assert call_count == 2
+    assert result.content is None
+    assert result.error_message is not None
+    assert result.warnings
+    assert result.parsing_errors

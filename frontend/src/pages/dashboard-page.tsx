@@ -302,7 +302,7 @@ export function DashboardPage() {
                     <option value="openai">OpenAI</option>
                     <option value="claude">Claude</option>
                     <option value="gemini">Gemini</option>
-                    <option value="local">Ollama</option>
+                    <option value="ollama">Ollama</option>
                   </Select>
                 </div>
 
@@ -473,7 +473,7 @@ export function DashboardPage() {
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Ollama</span>
                 <span className="text-muted-foreground">
-                  {settings?.providers.local.model ?? "Not set"}
+                  {settings?.providers.ollama.model ?? "Not set"}
                 </span>
               </div>
               <div className="flex justify-between">

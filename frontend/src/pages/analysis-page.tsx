@@ -47,6 +47,7 @@ import {
   type AnalysisEvent,
   type AnalysisRequest,
   type AnalysisRunDetailResponse,
+  type OllamaModelInfo,
   type ReportCostItem,
   type ReportDetail,
 } from "../lib/api";
@@ -128,6 +129,7 @@ export function AnalysisPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
   const [defaultsApplied, setDefaultsApplied] = useState(false);
   const eventKeysRef = useRef<Set<string>>(new Set());
 
@@ -143,6 +145,32 @@ export function AnalysisPage() {
     }));
     setDefaultsApplied(true);
   }, [defaultsApplied, settings]);
+
+  useEffect(() => {
+    const baseUrl = settings?.providers.ollama.base_url?.trim();
+    if (!baseUrl) {
+      setOllamaModels([]);
+      return;
+    }
+
+    let active = true;
+    api
+      .listOllamaModels(baseUrl)
+      .then((models) => {
+        if (active) {
+          setOllamaModels(models);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOllamaModels([]);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [settings?.providers.ollama.base_url]);
 
   useEffect(() => {
     if (!routeRunId) {
@@ -343,10 +371,22 @@ export function AnalysisPage() {
     };
   }, [runDetail?.report_id]);
 
-  const modelOptions = getModelOptionsForSelection(
-    formState.llm_provider,
-    formState.llm_model,
-  );
+  const modelOptions = useMemo(() => {
+    if (formState.llm_provider !== "ollama") {
+      return getModelOptionsForSelection(formState.llm_provider, formState.llm_model);
+    }
+
+    const dynamicOptions = ollamaModels.map((model) => ({
+      value: model.id,
+      label: model.id,
+    }));
+    if (dynamicOptions.some((option) => option.value === formState.llm_model)) {
+      return dynamicOptions;
+    }
+    return formState.llm_model
+      ? [{ value: formState.llm_model, label: `${formState.llm_model} (saved)` }, ...dynamicOptions]
+      : dynamicOptions;
+  }, [formState.llm_model, formState.llm_provider, ollamaModels]);
   const isSelectedProviderReady =
     formState.llm_provider === "openai"
       ? (settings?.providers.openai.api_key_configured ?? false)
@@ -356,7 +396,7 @@ export function AnalysisPage() {
           ? (settings?.providers.gemini.api_key_configured ?? false)
           : true;
   const providerValidationMessage =
-    !isSelectedProviderReady && formState.llm_provider !== "local"
+    !isSelectedProviderReady && formState.llm_provider !== "ollama"
       ? `Add a ${getProviderLabel(formState.llm_provider)} API key in Settings before running analysis with ${getProviderLabel(formState.llm_provider)}.`
       : null;
 
@@ -537,7 +577,7 @@ export function AnalysisPage() {
                     <option value="openai">OpenAI</option>
                     <option value="claude">Claude</option>
                     <option value="gemini">Gemini</option>
-                    <option value="local">Ollama</option>
+                    <option value="ollama">Ollama</option>
                   </Select>
                   {providerValidationMessage ? (
                     <p className="text-xs text-destructive">{providerValidationMessage}</p>
@@ -715,6 +755,10 @@ export function AnalysisPage() {
                 items={reportDetail.cost_breakdown.items.map((item) => ({
                   label: formatAgentName(item.agent_name),
                   model: `${item.provider}/${item.model}`,
+                  costType: item.cost_type,
+                  durationMs: item.duration_ms,
+                  warnings: item.warnings,
+                  parsingErrors: item.parsing_errors,
                   inputTokens: item.input_tokens,
                   outputTokens: item.output_tokens,
                   cost: item.cost_usd,

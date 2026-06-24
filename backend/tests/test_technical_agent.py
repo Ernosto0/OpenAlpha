@@ -186,7 +186,7 @@ def test_technical_agent_returns_partial_output_when_indicators_are_missing() ->
     result = asyncio.run(TechnicalAgent().run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert isinstance(context.technical_output, TechnicalAgentOutput)
     assert context.technical_output.view == "insufficient_data"
@@ -210,7 +210,7 @@ def test_technical_agent_returns_partial_output_when_llm_fails() -> None:
     result = asyncio.run(TechnicalAgent(llm_provider=FailingLLMProvider()).run(context))
 
     assert result.status == "partial"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert context.technical_output is not None
     assert context.technical_output.view == "insufficient_data"
     assert any("LLM request failed" in warning for warning in result.warnings)

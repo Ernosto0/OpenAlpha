@@ -82,7 +82,7 @@ def build_test_service() -> ReportService:
                 id="cost_trace_1",
                 analysis_run_id="run_123",
                 agent_name="data_collector",
-                provider="local",
+                provider="deterministic",
                 model="deterministic",
                 input_tokens=0,
                 output_tokens=0,
@@ -182,7 +182,7 @@ def build_final_report(created_at: datetime) -> FinalReport:
             items=[
                 FinalReportCostItem(
                     agent_name="data_collector",
-                    provider="local",
+                    provider="deterministic",
                     model="deterministic",
                     input_tokens=0,
                     output_tokens=0,

@@ -52,7 +52,7 @@ class DataCollectorAgent(BaseAgent[DataCollectorOutput]):
         news_limit: int = 10,
         **kwargs: Any,
     ) -> None:
-        super().__init__(provider="local", model="deterministic", **kwargs)
+        super().__init__(provider="deterministic", model="deterministic", **kwargs)
         self.price_providers = self._resolve_price_providers(price_provider)
         self.price_provider = self.price_providers[0]
         self.facts_provider = facts_provider or SECProvider()
@@ -156,8 +156,9 @@ class DataCollectorAgent(BaseAgent[DataCollectorOutput]):
 
         return AgentExecutionPayload(
             status="completed" if price_bars else "partial",
-            provider="local",
+            provider="deterministic",
             model="deterministic",
+            cost_type="deterministic",
             output=DataCollectorOutput(
                 market_data=market_data,
                 data_quality=data_quality,

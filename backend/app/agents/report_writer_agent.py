@@ -270,8 +270,9 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             context.final_report = output
             return AgentExecutionPayload(
                 status="partial",
-                provider="local",
+                provider="deterministic",
                 model="deterministic",
+                cost_type="deterministic",
                 output=output,
                 data_used=self._data_used(context),
                 warnings=self._report_warnings(context),
@@ -305,8 +306,9 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             context.final_report = output
             return AgentExecutionPayload(
                 status="partial",
-                provider="local",
+                provider="deterministic",
                 model="deterministic",
+                cost_type="deterministic",
                 output=output,
                 data_used=self._data_used(context),
                 warnings=output.warnings,
@@ -333,6 +335,10 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
                         input_tokens=result.input_tokens,
                         output_tokens=result.output_tokens,
                         estimated_cost_usd=result.estimated_cost_usd,
+                        cost_type=result.cost_type,
+                        duration_ms=result.duration_ms,
+                        warnings=result.warnings,
+                        parsing_errors=result.parsing_errors,
                     ),
                 ),
                 "warnings": self._dedupe(
@@ -353,6 +359,8 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             estimated_cost_usd=result.estimated_cost_usd,
+            cost_type=result.cost_type,
+            duration_ms=result.duration_ms,
             output=enriched_output,
             data_used=self._data_used(context),
             warnings=enriched_output.warnings,
@@ -658,6 +666,10 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
                 input_tokens=trace.input_tokens,
                 output_tokens=trace.output_tokens,
                 estimated_cost_usd=trace.estimated_cost_usd,
+                cost_type=trace.cost_type,
+                duration_ms=trace.duration_ms,
+                warnings=list(trace.warnings),
+                parsing_errors=list(trace.parsing_errors),
             )
             for trace in traces
         ]

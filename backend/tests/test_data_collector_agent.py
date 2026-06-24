@@ -183,7 +183,7 @@ def test_data_collector_writes_context_and_returns_typed_output() -> None:
     result = asyncio.run(agent.run(context))
 
     assert result.status == "completed"
-    assert result.provider == "local"
+    assert result.provider == "deterministic"
     assert result.model == "deterministic"
     assert result.output is not None
     assert isinstance(result.output, DataCollectorOutput)
@@ -257,7 +257,7 @@ def test_data_collector_records_zero_cost_trace() -> None:
     assert result.input_tokens == 0
     assert result.output_tokens == 0
     assert len(context.cost_traces) == 1
-    assert context.cost_traces[0].provider == "local"
+    assert context.cost_traces[0].provider == "deterministic"
     assert context.cost_traces[0].model == "deterministic"
     assert context.cost_traces[0].estimated_cost_usd == 0
 

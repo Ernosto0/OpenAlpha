@@ -138,8 +138,9 @@ class NewsSentimentAgent(BaseAgent[NewsSentimentOutput]):
             context.news_sentiment_output = output
             return AgentExecutionPayload(
                 status="partial",
-                provider="local",
+                provider="deterministic",
                 model="deterministic",
+                cost_type="deterministic",
                 output=output,
                 data_used=[],
                 warnings=output.warnings,
@@ -167,8 +168,9 @@ class NewsSentimentAgent(BaseAgent[NewsSentimentOutput]):
             context.news_sentiment_output = output
             return AgentExecutionPayload(
                 status="partial",
-                provider="local",
+                provider="deterministic",
                 model="deterministic",
+                cost_type="deterministic",
                 output=output,
                 data_used=["news"],
                 warnings=output.warnings,
@@ -188,6 +190,8 @@ class NewsSentimentAgent(BaseAgent[NewsSentimentOutput]):
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             estimated_cost_usd=result.estimated_cost_usd,
+            cost_type=result.cost_type,
+            duration_ms=result.duration_ms,
             output=output,
             data_used=["news"],
             warnings=warnings,

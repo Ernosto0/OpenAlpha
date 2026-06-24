@@ -166,7 +166,7 @@ Result:
 - OpenAI-backed runs are supported
 - Claude-backed runs are supported
 - Gemini-backed runs are supported
-- Ollama/local is currently a partial/planned surface, not a working runtime path
+- Ollama is a working local runtime path with start-of-run health and model preflight checks, plus persisted local-inference telemetry
 
 ## Performance Evaluation Model
 

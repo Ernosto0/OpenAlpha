@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from sqlmodel import Session, select
 
 from backend.app.db.models import AgentOutput, AnalysisRun, CostTrace, Report
@@ -35,6 +35,10 @@ class ReportCostItemResponse(OpenAlphaSchema):
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    cost_type: str
+    duration_ms: int
+    warnings: list[str] = Field(default_factory=list)
+    parsing_errors: list[str] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -124,10 +128,16 @@ class ReportService:
                 AnalysisAgentOutputResponse(
                     agent_name=output.agent_name,
                     status=output.status,
+                    provider=output.provider,
+                    model=output.model,
                     output_json=output.output_json,
                     input_tokens=output.input_tokens,
                     output_tokens=output.output_tokens,
                     cost_usd=output.cost_usd,
+                    cost_type=output.cost_type,
+                    duration_ms=output.duration_ms,
+                    warnings=list(output.warnings_json or []),
+                    parsing_errors=list(output.parsing_errors_json or []),
                     started_at=output.started_at,
                     finished_at=output.finished_at,
                     error_message=output.error_message,
@@ -144,6 +154,10 @@ class ReportService:
                         input_tokens=trace.input_tokens,
                         output_tokens=trace.output_tokens,
                         cost_usd=trace.cost_usd,
+                        cost_type=trace.cost_type,
+                        duration_ms=trace.duration_ms,
+                        warnings=list(trace.warnings_json or []),
+                        parsing_errors=list(trace.parsing_errors_json or []),
                         created_at=self._normalize_datetime(trace.created_at),
                     )
                     for trace in traces

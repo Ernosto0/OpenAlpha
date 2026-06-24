@@ -19,7 +19,8 @@ export type ProviderStatus =
   | "failed"
   | "untested";
 
-export type RuntimeProvider = "openai" | "claude" | "gemini" | "local";
+export type RuntimeProvider = "openai" | "claude" | "gemini" | "ollama";
+export type RuntimeProviderInput = RuntimeProvider | "local";
 
 export type RemoteProviderSettings = {
   api_key_configured: boolean;
@@ -29,7 +30,7 @@ export type RemoteProviderSettings = {
   last_tested_at: string | null;
 };
 
-export type LocalSettings = {
+export type OllamaSettings = {
   base_url: string;
   model: string;
   status: ProviderStatus;
@@ -51,13 +52,13 @@ export type AppSettings = {
     openai: RemoteProviderSettings;
     claude: RemoteProviderSettings;
     gemini: RemoteProviderSettings;
-    local: LocalSettings;
+    ollama: OllamaSettings;
   };
   configured_providers: ConfiguredProviderSummary[];
 };
 
 export type AppSettingsUpdate = {
-  default_provider: RuntimeProvider;
+  default_provider: RuntimeProviderInput;
   default_model: string;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
@@ -66,12 +67,45 @@ export type AppSettingsUpdate = {
   ollama_model: string;
 };
 
+export type ProviderCapabilities = {
+  health_check: boolean;
+  list_models: boolean;
+  requires_api_key: boolean;
+  supports_structured_output: boolean;
+};
+
+export type ProviderCatalogEntry = {
+  id: RuntimeProvider;
+  label: string;
+  kind: "remote_api" | "local_runtime";
+  capabilities: ProviderCapabilities;
+};
+
 export type ProviderTestResult = {
   provider: RuntimeProvider;
   success: boolean;
   status: ProviderStatus;
   message: string;
   tested_at: string;
+};
+
+export type ProviderTestInput = {
+  provider: RuntimeProviderInput;
+  base_url?: string;
+  model?: string;
+};
+
+export type OllamaModelInfo = {
+  id: string;
+  label: string;
+  provider: string;
+  installed: boolean;
+  size_bytes: number | null;
+  family: string | null;
+  parameter_size: string | null;
+  quantization_level: string | null;
+  modified_at: string | null;
+  raw: Record<string, unknown> | null;
 };
 
 export type AnalysisRequest = {
@@ -109,10 +143,16 @@ export type AnalysisEvent = {
 export type AnalysisAgentOutputResponse = {
   agent_name: string;
   status: string;
+  provider: string;
+  model: string;
   output_json: Record<string, unknown> | null;
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  cost_type: string;
+  duration_ms: number;
+  warnings: string[];
+  parsing_errors: string[];
   started_at: string;
   finished_at: string | null;
   error_message: string | null;
@@ -156,6 +196,10 @@ export type ReportCostItem = {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  cost_type: string;
+  duration_ms: number;
+  warnings: string[];
+  parsing_errors: string[];
   created_at: string;
 };
 
@@ -289,16 +333,21 @@ export const api = {
   getAppInfo: () => request<AppInfoResponse>("/"),
   getHealth: () => request<HealthResponse>("/api/health"),
   getSettings: () => request<AppSettings>("/api/settings"),
+  listProviders: () => request<ProviderCatalogEntry[]>("/api/providers"),
   saveSettings: (settings: AppSettingsUpdate) =>
     request<AppSettings>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
-  testProvider: (provider: RuntimeProvider) =>
+  testProvider: (payload: ProviderTestInput) =>
     request<ProviderTestResult>("/api/providers/llm/test", {
       method: "POST",
-      body: JSON.stringify({ provider }),
+      body: JSON.stringify(payload),
     }),
+  listOllamaModels: (baseUrl?: string) =>
+    request<OllamaModelInfo[]>(
+      `/api/providers/llm/ollama/models${baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : ""}`,
+    ),
   runAnalysis: (payload: AnalysisRequest) =>
     request<AnalysisRunAcceptedResponse>("/api/analysis/run", {
       method: "POST",

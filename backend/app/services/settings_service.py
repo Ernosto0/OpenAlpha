@@ -7,17 +7,21 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from sqlmodel import Session
 
 from backend.app.db.models import Setting
 from backend.app.db.session import engine
+from backend.app.llm import LLMModelInfo
+from backend.app.llm.base import normalize_provider_name
+from backend.app.llm.providers.ollama_provider import OllamaProvider, OllamaTransport
 from backend.app.orchestrator.schemas import OpenAlphaSchema, utc_now
 
 
-SettingsProvider = Literal["openai", "claude", "gemini", "local"]
+CanonicalProvider = Literal["openai", "claude", "gemini", "ollama"]
+ProviderInput = Literal["openai", "claude", "gemini", "ollama", "local"]
 ProviderTestStatus = Literal["configured", "missing", "tested", "failed", "untested"]
-ProviderTestable = Literal["openai", "claude", "gemini", "local"]
+ProviderKind = Literal["remote_api", "local_runtime"]
 ProviderTestTransport = Callable[[str, Mapping[str, str], float], str]
 
 SETTINGS_KEY = "app_settings"
@@ -27,14 +31,14 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
 DEFAULT_OLLAMA_MODEL = "llama3"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
-PROVIDER_LABELS: dict[SettingsProvider, str] = {
+PROVIDER_LABELS: dict[CanonicalProvider, str] = {
     "openai": "OpenAI",
     "claude": "Claude",
     "gemini": "Gemini",
-    "local": "Ollama",
+    "ollama": "Ollama",
 }
 
-REMOTE_PROVIDERS: tuple[SettingsProvider, ...] = ("openai", "claude", "gemini")
+REMOTE_PROVIDERS: tuple[CanonicalProvider, ...] = ("openai", "claude", "gemini")
 API_KEY_FIELDS: dict[Literal["openai", "claude", "gemini"], str] = {
     "openai": "openai_api_key",
     "claude": "anthropic_api_key",
@@ -42,8 +46,22 @@ API_KEY_FIELDS: dict[Literal["openai", "claude", "gemini"], str] = {
 }
 
 
+class ProviderCapabilityFlags(OpenAlphaSchema):
+    health_check: bool
+    list_models: bool
+    requires_api_key: bool
+    supports_structured_output: bool
+
+
+class ProviderCatalogEntry(OpenAlphaSchema):
+    id: CanonicalProvider
+    label: str
+    kind: ProviderKind
+    capabilities: ProviderCapabilityFlags
+
+
 class ConfiguredProviderSummary(OpenAlphaSchema):
-    provider: SettingsProvider
+    provider: CanonicalProvider
     label: str
     status: ProviderTestStatus
     model: str | None = None
@@ -69,18 +87,18 @@ class AppSettingsProviders(OpenAlphaSchema):
     openai: RemoteProviderSettings
     claude: RemoteProviderSettings
     gemini: RemoteProviderSettings
-    local: OllamaProviderSettings
+    ollama: OllamaProviderSettings
 
 
 class AppSettingsResponse(OpenAlphaSchema):
-    default_provider: SettingsProvider = "openai"
+    default_provider: CanonicalProvider = "openai"
     default_model: str = DEFAULT_OPENAI_MODEL
     providers: AppSettingsProviders
     configured_providers: list[ConfiguredProviderSummary] = Field(default_factory=list)
 
 
 class AppSettingsUpdate(OpenAlphaSchema):
-    default_provider: SettingsProvider
+    default_provider: ProviderInput
     default_model: str = Field(min_length=1, max_length=120)
     openai_api_key: str | None = Field(default=None, max_length=500)
     anthropic_api_key: str | None = Field(default=None, max_length=500)
@@ -88,13 +106,29 @@ class AppSettingsUpdate(OpenAlphaSchema):
     ollama_base_url: str = Field(min_length=1, max_length=300)
     ollama_model: str = Field(min_length=1, max_length=120)
 
+    @field_validator("default_provider", mode="before")
+    @classmethod
+    def canonicalize_default_provider(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("default_provider must be a string")
+        return normalize_provider_name(value)
+
 
 class ProviderTestRequest(OpenAlphaSchema):
-    provider: ProviderTestable
+    provider: ProviderInput
+    base_url: str | None = Field(default=None, max_length=300)
+    model: str | None = Field(default=None, max_length=120)
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def canonicalize_provider(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("provider must be a string")
+        return normalize_provider_name(value)
 
 
 class ProviderTestResponse(OpenAlphaSchema):
-    provider: ProviderTestable
+    provider: CanonicalProvider
     success: bool
     status: ProviderTestStatus
     message: str
@@ -109,6 +143,7 @@ class SettingsService:
         openai_test_transport: ProviderTestTransport | None = None,
         claude_test_transport: ProviderTestTransport | None = None,
         gemini_test_transport: ProviderTestTransport | None = None,
+        ollama_transport: OllamaTransport | None = None,
     ) -> None:
         self._session_factory = session_factory or (lambda: Session(engine))
         self._provider_test_transports: dict[str, ProviderTestTransport] = {
@@ -116,6 +151,7 @@ class SettingsService:
             "claude": claude_test_transport or self._default_test_transport,
             "gemini": gemini_test_transport or self._default_test_transport,
         }
+        self._ollama_transport = ollama_transport
 
     def get_settings(self) -> AppSettingsResponse:
         with self._session_factory() as session:
@@ -125,7 +161,7 @@ class SettingsService:
     def save_settings(self, update: AppSettingsUpdate) -> AppSettingsResponse:
         with self._session_factory() as session:
             payload = self._load_payload(session)
-            payload["default_provider"] = update.default_provider
+            payload["default_provider"] = normalize_provider_name(update.default_provider)
             payload["default_model"] = update.default_model.strip()
             if update.openai_api_key is not None:
                 payload["openai_api_key"] = self._normalize_secret(update.openai_api_key)
@@ -133,23 +169,70 @@ class SettingsService:
                 payload["anthropic_api_key"] = self._normalize_secret(update.anthropic_api_key)
             if update.gemini_api_key is not None:
                 payload["gemini_api_key"] = self._normalize_secret(update.gemini_api_key)
-            payload["ollama_base_url"] = update.ollama_base_url.strip().rstrip("/")
+            payload["ollama_base_url"] = self._normalize_base_url(update.ollama_base_url)
             payload["ollama_model"] = update.ollama_model.strip()
             self._save_payload(session, payload)
             return self._build_response(payload)
 
-    def test_provider(self, request: ProviderTestRequest) -> ProviderTestResponse:
+    def list_provider_catalog(self) -> list[ProviderCatalogEntry]:
+        return [
+            ProviderCatalogEntry(
+                id="openai",
+                label="OpenAI",
+                kind="remote_api",
+                capabilities=ProviderCapabilityFlags(
+                    health_check=True,
+                    list_models=False,
+                    requires_api_key=True,
+                    supports_structured_output=True,
+                ),
+            ),
+            ProviderCatalogEntry(
+                id="claude",
+                label="Claude",
+                kind="remote_api",
+                capabilities=ProviderCapabilityFlags(
+                    health_check=True,
+                    list_models=False,
+                    requires_api_key=True,
+                    supports_structured_output=True,
+                ),
+            ),
+            ProviderCatalogEntry(
+                id="gemini",
+                label="Gemini",
+                kind="remote_api",
+                capabilities=ProviderCapabilityFlags(
+                    health_check=True,
+                    list_models=False,
+                    requires_api_key=True,
+                    supports_structured_output=True,
+                ),
+            ),
+            ProviderCatalogEntry(
+                id="ollama",
+                label="Ollama",
+                kind="local_runtime",
+                capabilities=ProviderCapabilityFlags(
+                    health_check=True,
+                    list_models=True,
+                    requires_api_key=False,
+                    supports_structured_output=True,
+                ),
+            ),
+        ]
+
+    async def test_provider(self, request: ProviderTestRequest) -> ProviderTestResponse:
         with self._session_factory() as session:
             payload = self._load_payload(session)
             tested_at = utc_now()
 
-            if request.provider == "local":
-                response = ProviderTestResponse(
-                    provider="local",
-                    success=False,
-                    status="untested",
-                    message="Ollama live testing is not implemented in this version.",
+            if request.provider == "ollama":
+                response = await self._test_ollama_provider(
+                    payload=payload,
                     tested_at=tested_at,
+                    base_url=request.base_url,
+                    model=request.model,
                 )
             else:
                 response = self._test_remote_provider(
@@ -159,13 +242,37 @@ class SettingsService:
                 )
 
             test_results = payload.setdefault("provider_test_results", {})
-            test_results[request.provider] = {
+            test_results[response.provider] = {
                 "status": response.status,
                 "message": response.message,
                 "tested_at": response.tested_at.isoformat(),
             }
             self._save_payload(session, payload)
             return response
+
+    async def list_ollama_models(self, *, base_url: str | None = None) -> list[LLMModelInfo]:
+        provider = self._build_ollama_provider(base_url=base_url)
+        return await provider.list_models()
+
+    def get_ollama_runtime_config(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str]:
+        settings = self.get_settings()
+        return (
+            self._normalize_base_url(base_url or settings.providers.ollama.base_url),
+            (model or settings.providers.ollama.model).strip(),
+        )
+
+    def build_ollama_provider(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> OllamaProvider:
+        return self._build_ollama_provider(base_url=base_url, model=model)
 
     def _test_remote_provider(
         self,
@@ -222,6 +329,59 @@ class SettingsService:
             tested_at=tested_at,
         )
 
+    async def _test_ollama_provider(
+        self,
+        *,
+        payload: dict[str, Any],
+        tested_at: datetime,
+        base_url: str | None,
+        model: str | None,
+    ) -> ProviderTestResponse:
+        provider = self._build_ollama_provider(
+            base_url=base_url or payload.get("ollama_base_url"),
+            model=model or payload.get("ollama_model"),
+        )
+        health = await provider.health_check()
+        if not health.available:
+            return ProviderTestResponse(
+                provider="ollama",
+                success=False,
+                status="failed",
+                message=health.message,
+                tested_at=tested_at,
+            )
+
+        models = await provider.list_models()
+        if not models:
+            return ProviderTestResponse(
+                provider="ollama",
+                success=True,
+                status="tested",
+                message=f"Ollama is connected at {provider.base_url}, but no models are installed.",
+                tested_at=tested_at,
+            )
+
+        selected_model = (model or payload.get("ollama_model") or "").strip()
+        if selected_model and not any(item.id == selected_model for item in models):
+            return ProviderTestResponse(
+                provider="ollama",
+                success=False,
+                status="failed",
+                message=(
+                    f"Ollama is connected at {provider.base_url}, but the selected model "
+                    f"'{selected_model}' is unavailable."
+                ),
+                tested_at=tested_at,
+            )
+
+        return ProviderTestResponse(
+            provider="ollama",
+            success=True,
+            status="tested",
+            message=health.message,
+            tested_at=tested_at,
+        )
+
     def _build_provider_test_request(
         self,
         provider: Literal["openai", "claude", "gemini"],
@@ -256,6 +416,18 @@ class SettingsService:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             return response.read().decode("utf-8")
 
+    def _build_ollama_provider(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+    ) -> OllamaProvider:
+        return OllamaProvider(
+            base_url=self._normalize_base_url(base_url or DEFAULT_OLLAMA_BASE_URL),
+            default_model=(model or DEFAULT_OLLAMA_MODEL).strip(),
+            transport=self._ollama_transport,
+        )
+
     def _load_payload(self, session: Session) -> dict[str, Any]:
         row = session.get(Setting, SETTINGS_KEY)
         if row is None or not isinstance(row.value_json, dict):
@@ -263,23 +435,42 @@ class SettingsService:
 
         payload = self._default_payload()
         payload.update(row.value_json)
+        payload["default_provider"] = normalize_provider_name(
+            str(row.value_json.get("default_provider") or payload["default_provider"])
+        )
         payload["provider_test_results"] = self._normalize_test_results(
             row.value_json.get("provider_test_results")
         )
         return payload
 
     def _save_payload(self, session: Session, payload: dict[str, Any]) -> None:
+        persisted_payload = {
+            "default_provider": normalize_provider_name(
+                str(payload.get("default_provider") or "openai")
+            ),
+            "default_model": str(payload.get("default_model") or DEFAULT_OPENAI_MODEL),
+            "openai_api_key": payload.get("openai_api_key"),
+            "anthropic_api_key": payload.get("anthropic_api_key"),
+            "gemini_api_key": payload.get("gemini_api_key"),
+            "ollama_base_url": self._normalize_base_url(
+                str(payload.get("ollama_base_url") or DEFAULT_OLLAMA_BASE_URL)
+            ),
+            "ollama_model": str(payload.get("ollama_model") or DEFAULT_OLLAMA_MODEL).strip(),
+            "provider_test_results": self._normalize_test_results(
+                payload.get("provider_test_results")
+            ),
+        }
         row = session.get(Setting, SETTINGS_KEY)
         now = utc_now()
         if row is None:
             row = Setting(
                 key=SETTINGS_KEY,
-                value_json=payload,
+                value_json=persisted_payload,
                 created_at=now,
                 updated_at=now,
             )
         else:
-            row.value_json = payload
+            row.value_json = persisted_payload
             row.updated_at = now
         session.add(row)
         session.commit()
@@ -290,12 +481,14 @@ class SettingsService:
             provider: self._build_remote_provider_settings(payload, test_results, provider)
             for provider in REMOTE_PROVIDERS
         }
-        local_settings = OllamaProviderSettings(
-            base_url=str(payload.get("ollama_base_url") or DEFAULT_OLLAMA_BASE_URL),
+        ollama_settings = OllamaProviderSettings(
+            base_url=self._normalize_base_url(
+                str(payload.get("ollama_base_url") or DEFAULT_OLLAMA_BASE_URL)
+            ),
             model=str(payload.get("ollama_model") or DEFAULT_OLLAMA_MODEL),
-            status=self._resolve_local_status(payload, test_results),
-            last_test_message=test_results.get("local", {}).get("message"),
-            last_tested_at=self._parse_datetime(test_results.get("local", {}).get("tested_at")),
+            status=self._resolve_ollama_status(payload, test_results),
+            last_test_message=test_results.get("ollama", {}).get("message"),
+            last_tested_at=self._parse_datetime(test_results.get("ollama", {}).get("tested_at")),
         )
 
         return AppSettingsResponse(
@@ -305,9 +498,9 @@ class SettingsService:
                 openai=remote_settings["openai"],
                 claude=remote_settings["claude"],
                 gemini=remote_settings["gemini"],
-                local=local_settings,
+                ollama=ollama_settings,
             ),
-            configured_providers=self._configured_providers(remote_settings, local_settings),
+            configured_providers=self._configured_providers(remote_settings, ollama_settings),
         )
 
     def _build_remote_provider_settings(
@@ -328,7 +521,7 @@ class SettingsService:
     def _configured_providers(
         self,
         remote_settings: Mapping[str, RemoteProviderSettings],
-        local_settings: OllamaProviderSettings,
+        ollama_settings: OllamaProviderSettings,
     ) -> list[ConfiguredProviderSummary]:
         providers: list[ConfiguredProviderSummary] = []
         for provider_name in REMOTE_PROVIDERS:
@@ -342,13 +535,13 @@ class SettingsService:
                         model=None,
                     )
                 )
-        if local_settings.base_url.strip():
+        if ollama_settings.base_url.strip():
             providers.append(
                 ConfiguredProviderSummary(
-                    provider="local",
-                    label=PROVIDER_LABELS["local"],
-                    status=local_settings.status,
-                    model=local_settings.model,
+                    provider="ollama",
+                    label=PROVIDER_LABELS["ollama"],
+                    status=ollama_settings.status,
+                    model=ollama_settings.model,
                 )
             )
         return providers
@@ -364,14 +557,14 @@ class SettingsService:
         status = test_results.get(provider, {}).get("status")
         return status if status in {"configured", "tested", "failed"} else "configured"
 
-    def _resolve_local_status(
+    def _resolve_ollama_status(
         self,
         payload: dict[str, Any],
         test_results: dict[str, dict[str, str]],
     ) -> ProviderTestStatus:
         if not str(payload.get("ollama_base_url") or "").strip():
             return "missing"
-        status = test_results.get("local", {}).get("status")
+        status = test_results.get("ollama", {}).get("status")
         return status if status in {"configured", "tested", "failed", "untested"} else "untested"
 
     def _default_payload(self) -> dict[str, Any]:
@@ -393,12 +586,13 @@ class SettingsService:
         for provider_name, result in value.items():
             if not isinstance(provider_name, str) or not isinstance(result, dict):
                 continue
+            canonical_name = normalize_provider_name(provider_name)
             entry: dict[str, str] = {}
             for key in ("status", "message", "tested_at"):
                 item = result.get(key)
                 if isinstance(item, str) and item.strip():
                     entry[key] = item.strip()
-            normalized[provider_name] = entry
+            normalized[canonical_name] = entry
         return normalized
 
     def _normalize_secret(self, value: Any) -> str | None:
@@ -415,10 +609,14 @@ class SettingsService:
             return "*" * len(secret)
         return f"{secret[:4]}...{secret[-4:]}"
 
-    def _coerce_provider(self, value: Any) -> SettingsProvider:
-        if value in {"openai", "claude", "gemini", "local"}:
-            return value
+    def _coerce_provider(self, value: Any) -> CanonicalProvider:
+        normalized = normalize_provider_name(str(value or "openai"))
+        if normalized in {"openai", "claude", "gemini", "ollama"}:
+            return normalized
         return "openai"
+
+    def _normalize_base_url(self, value: str) -> str:
+        return value.strip().rstrip("/")
 
     def _parse_datetime(self, value: Any) -> datetime | None:
         if not isinstance(value, str):
@@ -427,7 +625,6 @@ class SettingsService:
             return datetime.fromisoformat(value)
         except ValueError:
             return None
-
 
 settings_service = SettingsService()
 
@@ -444,11 +641,11 @@ __all__ = [
     "DEFAULT_OPENAI_MODEL",
     "OllamaProviderSettings",
     "PROVIDER_LABELS",
+    "ProviderCatalogEntry",
     "ProviderTestRequest",
     "ProviderTestResponse",
     "ProviderTestStatus",
     "RemoteProviderSettings",
-    "SettingsProvider",
     "SettingsService",
     "settings_service",
 ]

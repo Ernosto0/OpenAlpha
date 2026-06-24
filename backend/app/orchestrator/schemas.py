@@ -5,6 +5,8 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.app.llm.base import normalize_provider_name
+
 
 AIView: TypeAlias = Literal[
     "bullish",
@@ -93,6 +95,11 @@ class AnalysisRequest(OpenAlphaSchema):
         if not stripped:
             raise ValueError("value must not be empty")
         return stripped
+
+    @field_validator("llm_provider")
+    @classmethod
+    def canonicalize_provider(cls, value: str) -> str:
+        return normalize_provider_name(value)
 
 
 class DataSource(OpenAlphaSchema):
@@ -236,6 +243,10 @@ class CostTrace(OpenAlphaSchema):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0, ge=0)
+    cost_type: str = Field(default="api", min_length=1, max_length=64)
+    duration_ms: int = Field(default=0, ge=0)
+    warnings: list[str] = Field(default_factory=list)
+    parsing_errors: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -397,6 +408,10 @@ class FinalReportCostItem(OpenAlphaSchema):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0, ge=0)
+    cost_type: str = Field(default="api", min_length=1, max_length=64)
+    duration_ms: int = Field(default=0, ge=0)
+    warnings: list[str] = Field(default_factory=list)
+    parsing_errors: list[str] = Field(default_factory=list)
 
 
 class FinalReportCostBreakdown(OpenAlphaSchema):
@@ -460,6 +475,8 @@ class AgentResult(OpenAlphaSchema):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0, ge=0)
+    cost_type: str = Field(default="api", min_length=1, max_length=64)
+    duration_ms: int = Field(default=0, ge=0)
     started_at: datetime = Field(default_factory=utc_now)
     finished_at: datetime | None = None
     output: AgentOutputContent | None = None

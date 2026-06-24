@@ -73,6 +73,7 @@ class GeminiProvider(BaseLLMProvider):
         max_output_tokens: int | None = None,
     ) -> LLMResult:
         async def operation() -> LLMResult:
+            started = self.start_timer()
             resolved_model = self.resolve_model(model)
             payload = self._build_payload(
                 messages=messages,
@@ -99,6 +100,8 @@ class GeminiProvider(BaseLLMProvider):
                 output_tokens=usage.output_tokens,
                 total_tokens=usage.total_tokens,
                 estimated_cost_usd=cost,
+                cost_type="api",
+                duration_ms=self.elapsed_ms(started),
                 warnings=warnings,
             )
 
@@ -115,6 +118,7 @@ class GeminiProvider(BaseLLMProvider):
         max_output_tokens: int | None = None,
     ) -> LLMResult:
         async def operation() -> LLMResult:
+            started = self.start_timer()
             resolved_model = self.resolve_model(model)
             payload = self._build_payload(
                 messages=messages,
@@ -143,6 +147,8 @@ class GeminiProvider(BaseLLMProvider):
                 output_tokens=usage.output_tokens,
                 total_tokens=usage.total_tokens,
                 estimated_cost_usd=cost,
+                cost_type="api",
+                duration_ms=self.elapsed_ms(started),
                 warnings=warnings,
             )
 

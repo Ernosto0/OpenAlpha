@@ -97,7 +97,7 @@ Current behavior:
 
 - OpenAI, Claude, and Gemini are implemented LLM runtimes for the active agents.
 - Each remote provider can be configured and credential-tested from `Settings`.
-- Ollama settings are stored and shown in the UI, but live Ollama testing is not implemented and the active agent factories still reject the local runtime.
+- Ollama settings are stored in the database and the backend now supports live connectivity tests, installed-model discovery, and active local-runtime analysis runs.
 
 ## Troubleshooting
 
@@ -158,7 +158,7 @@ Check:
 
 ### Ollama Looks Configured But Analysis Still Fails
 
-That is expected in the current codebase. The settings UI supports local runtime fields, but the active runtime only supports the remote providers `OpenAI`, `Claude`, and `Gemini`.
+If Ollama fails to start a run, check that the configured base URL is reachable, the Ollama service is running, and the selected model is installed locally.
 
 ## Next Docs
 
