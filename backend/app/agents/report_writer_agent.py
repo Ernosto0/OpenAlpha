@@ -91,6 +91,7 @@ Return exactly this JSON shape:
 "company_name": "Company name if available",
 "market": "Market if available",
 "created_at": "Report timestamp if available",
+"latest_close": 0.0,
 "overall_view": "bullish | slightly_bullish | neutral | slightly_bearish | bearish | insufficient_data",
 "confidence": 0.0,
 "horizon": "Time horizon",
@@ -325,6 +326,7 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
                 "horizon": context.request.horizon,
                 "company_name": self._company_name(context) or output.company_name,
                 "created_at": context.updated_at,
+                "latest_close": self._latest_close_value(context),
                 "disclaimer": DISCLAIMER,
                 "cost_breakdown": self._cost_breakdown(
                     context,
@@ -509,6 +511,7 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
             company_name=company_name,
             market=context.request.market,
             created_at=context.updated_at,
+            latest_close=self._latest_close_value(context),
             overall_view=overall_view,
             confidence=confidence,
             horizon=context.request.horizon,
@@ -795,6 +798,13 @@ class ReportWriterAgent(BaseAgent[FinalReport]):
         if context.market_data and context.market_data.quote:
             return self._format_float(context.market_data.quote.price)
         return "unavailable"
+
+    def _latest_close_value(self, context: AnalysisContext) -> float | None:
+        if context.market_data and context.market_data.price_history:
+            return context.market_data.price_history[-1].close
+        if context.market_data and context.market_data.quote:
+            return context.market_data.quote.price
+        return None
 
     def _latest_price_timestamp(self, context: AnalysisContext) -> str:
         if context.market_data and context.market_data.price_history:

@@ -82,6 +82,7 @@ type FinalReportView = {
   title: string | null;
   symbol: string | null;
   companyName: string | null;
+  currentPrice: number | null;
   overallView: string | null;
   confidence: number | null;
   horizon: string | null;
@@ -816,10 +817,18 @@ export function AnalysisPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-4">
+                <div className="grid gap-4 md:grid-cols-5">
                   <MetricPanel
                     label="Confidence"
                     value={formatPercent(finalReport.confidence)}
+                  />
+                  <MetricPanel
+                    label="Current Price"
+                    value={
+                      finalReport.currentPrice != null
+                        ? formatUsd(finalReport.currentPrice)
+                        : "-"
+                    }
                   />
                   <MetricPanel
                     label="Risk Score"
@@ -1110,6 +1119,7 @@ function parseFinalReport(value: Record<string, unknown> | null): FinalReportVie
     title: getString(value.title),
     symbol: getString(value.symbol),
     companyName: getString(value.company_name),
+    currentPrice: getNumber(value.latest_close),
     overallView: getString(value.overall_view),
     confidence: getNumber(value.confidence),
     horizon: getString(value.horizon),

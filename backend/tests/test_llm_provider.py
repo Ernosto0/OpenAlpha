@@ -193,6 +193,39 @@ def test_openai_generate_json_retries_retryable_errors() -> None:
     assert result.content.score == 0.7
 
 
+def test_openai_generate_json_retries_timeouts() -> None:
+    call_count = 0
+
+    def transport(
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("read operation timed out")
+        return openai_response_with_text('{"rating": "ok", "score": 0.9}')
+
+    provider = OpenAIProvider(
+        api_key="test-key",
+        default_model="gpt-4.1-mini",
+        retry_backoff_seconds=0,
+        transport=transport,
+    )
+
+    result = asyncio.run(
+        provider.generate_json(
+            messages=[{"role": "user", "content": "Analyze META."}],
+            output_schema=ExampleOutput,
+        )
+    )
+
+    assert call_count == 2
+    assert result.content.score == 0.9
+
+
 def test_openai_generate_json_normalizes_optional_fields_for_strict_schema() -> None:
     calls: list[dict[str, Any]] = []
 

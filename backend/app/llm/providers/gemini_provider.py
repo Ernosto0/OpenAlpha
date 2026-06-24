@@ -272,6 +272,11 @@ class GeminiProvider(BaseLLMProvider):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 response_body = response.read().decode("utf-8")
+        except TimeoutError as exc:
+            raise LLMProviderError(
+                f"Gemini API request timed out after {timeout_seconds} seconds.",
+                retryable=True,
+            ) from exc
         except urllib.error.HTTPError as exc:
             error_message = self._read_http_error(exc)
             retryable = exc.code in {408, 409, 429, 500, 502, 503, 504}

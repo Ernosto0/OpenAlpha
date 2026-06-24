@@ -425,6 +425,7 @@ class FinalReport(OpenAlphaSchema):
     company_name: str = Field(min_length=1)
     market: Market
     created_at: datetime = Field(default_factory=utc_now)
+    latest_close: float | None = Field(default=None, ge=0)
     overall_view: AIView
     confidence: float = Field(ge=0, le=1)
     horizon: Horizon

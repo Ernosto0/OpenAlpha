@@ -267,14 +267,24 @@ class OpenAIProvider(BaseLLMProvider):
             "Authorization": f"Bearer {self._api_key_value()}",
             "Content-Type": "application/json",
         }
-        result = self._transport(
-            f"{self.base_url}/responses",
-            headers,
-            payload,
-            self.timeout_seconds,
-        )
-        if asyncio.iscoroutine(result):
-            result = await result
+        try:
+            result = self._transport(
+                f"{self.base_url}/responses",
+                headers,
+                payload,
+                self.timeout_seconds,
+            )
+            if asyncio.iscoroutine(result):
+                result = await result
+        except TimeoutError as exc:
+            logger.warning(
+                "OpenAI request timed out",
+                extra=self._log_extra(payload, error_message=str(exc)),
+            )
+            raise LLMProviderError(
+                f"OpenAI API request timed out after {self.timeout_seconds} seconds.",
+                retryable=True,
+            ) from exc
         logger.info(
             "OpenAI request completed",
             extra=self._log_extra(payload, response=result),
@@ -314,6 +324,18 @@ class OpenAIProvider(BaseLLMProvider):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 response_body = response.read().decode("utf-8")
+        except TimeoutError as exc:
+            logger.warning(
+                "OpenAI request timed out",
+                extra=self._log_extra(
+                    payload,
+                    error_message=str(exc) or f"timeout after {timeout_seconds} seconds",
+                ),
+            )
+            raise LLMProviderError(
+                f"OpenAI API request timed out after {timeout_seconds} seconds.",
+                retryable=True,
+            ) from exc
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
             error_message = self._error_message(error_body)

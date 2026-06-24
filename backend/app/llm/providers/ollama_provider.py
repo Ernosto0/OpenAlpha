@@ -337,6 +337,11 @@ class OllamaProvider(BaseLLMProvider):
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 response_body = response.read().decode("utf-8")
+        except TimeoutError as exc:
+            raise LLMProviderError(
+                f"Ollama request timed out at {self.base_url}.",
+                retryable=True,
+            ) from exc
         except ValueError as exc:
             raise LLMConfigurationError(
                 f"Ollama base URL is invalid: {self.base_url}",
@@ -355,7 +360,7 @@ class OllamaProvider(BaseLLMProvider):
             if "timed out" in reason.lower():
                 raise LLMProviderError(
                     f"Ollama request timed out at {self.base_url}.",
-                    retryable=False,
+                    retryable=True,
                 ) from exc
             raise LLMProviderError(
                 f"Ollama is not reachable at {self.base_url}: {reason}",

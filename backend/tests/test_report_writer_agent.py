@@ -49,6 +49,9 @@ def make_context() -> AnalysisContext:
             score=0.7,
         ),
     )
+    context.market_data.price_history = [
+        PriceBar(timestamp="2026-06-24T12:00:00Z", close=187.65)
+    ]
     context.thesis_output = ThesisAgentOutput(
         overall_view="neutral",
         confidence=0.4,
@@ -79,6 +82,7 @@ def test_report_writer_agent_returns_partial_report_when_llm_fails() -> None:
     assert result.status == "partial"
     assert result.provider == "deterministic"
     assert context.final_report is not None
+    assert context.final_report.latest_close == 187.65
     assert context.final_report.investment_thesis == "Balanced thesis."
     assert any("LLM request failed" in warning for warning in result.warnings)
 
