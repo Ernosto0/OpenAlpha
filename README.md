@@ -64,15 +64,17 @@ OpenAlpha is built for running equity research locally with a transparent agent 
 From the repository root:
 
 ```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-dev.txt
-pip install -e .
-cd frontend
-npm.cmd install
-cd ..
-openalpha run .
+py -m openalpha setup .
+py -m openalpha run .
 ```
+
+What `setup` does:
+
+- creates `.venv` if it does not exist
+- installs the local package into that virtualenv
+- runs `npm install` in `frontend/`
+
+If you prefer an activated shell, `.\.venv\Scripts\Activate.ps1` still works after setup, and then `openalpha run .` works too.
 
 ### Local URLs
 

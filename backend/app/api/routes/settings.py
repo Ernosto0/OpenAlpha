@@ -37,7 +37,7 @@ async def test_llm_provider(payload: ProviderTestRequest) -> ProviderTestRespons
     return await settings_service.test_provider(payload)
 
 
-@router.get("/api/providers/llm/ollama/models", response_model=list[dict])
+@router.get("/api/providers/llm/ollama/models", response_model=list[LLMModelInfo])
 async def list_ollama_models(
     base_url: str | None = Query(default=None, max_length=300),
 ) -> list[LLMModelInfo]:

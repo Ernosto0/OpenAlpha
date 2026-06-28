@@ -262,15 +262,39 @@ class OllamaProvider(BaseLLMProvider):
         *,
         payload: Mapping[str, Any] | None,
     ) -> Mapping[str, Any]:
-        result = self._transport(
-            method,
-            f"{self.base_url}{path}",
-            {"Content-Type": "application/json"},
-            payload,
-            self.timeout_seconds,
-        )
-        if asyncio.iscoroutine(result):
-            result = await result
+        try:
+            result = self._transport(
+                method,
+                f"{self.base_url}{path}",
+                {"Content-Type": "application/json"},
+                payload,
+                self.timeout_seconds,
+            )
+            if asyncio.iscoroutine(result):
+                result = await result
+        except LLMProviderError:
+            raise
+        except TimeoutError as exc:
+            raise LLMProviderError(
+                f"Ollama request timed out at {self.base_url}.",
+                retryable=True,
+            ) from exc
+        except ValueError as exc:
+            raise LLMConfigurationError(
+                f"Ollama base URL is invalid: {self.base_url}",
+                retryable=False,
+            ) from exc
+        except urllib.error.URLError as exc:
+            reason = str(exc.reason)
+            if "timed out" in reason.lower():
+                raise LLMProviderError(
+                    f"Ollama request timed out at {self.base_url}.",
+                    retryable=True,
+                ) from exc
+            raise LLMProviderError(
+                f"Ollama is not reachable at {self.base_url}: {reason}",
+                retryable=False,
+            ) from exc
         if not isinstance(result, Mapping):
             raise LLMProviderError(
                 "Ollama returned an unexpected response shape.",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 from sqlalchemy import Engine, text
@@ -124,6 +125,11 @@ MIGRATIONS: tuple[tuple[str, Iterable[str]], ...] = (
     ),
 )
 
+ALTER_TABLE_ADD_COLUMN_PATTERN = re.compile(
+    r"^\s*ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?P<column>\w+)\b",
+    re.IGNORECASE,
+)
+
 
 def run_migrations(engine: Engine) -> None:
     with engine.begin() as connection:
@@ -150,9 +156,25 @@ def run_migrations(engine: Engine) -> None:
                 continue
 
             for statement in statements:
+                if _statement_is_already_applied(connection, statement):
+                    continue
                 connection.execute(text(statement))
 
             connection.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:version)"),
                 {"version": version},
             )
+
+
+def _statement_is_already_applied(connection, statement: str) -> bool:
+    match = ALTER_TABLE_ADD_COLUMN_PATTERN.match(statement)
+    if match is None:
+        return False
+
+    table_name = match.group("table")
+    column_name = match.group("column")
+    existing_columns = {
+        row[1]
+        for row in connection.execute(text(f"PRAGMA table_info({table_name})")).all()
+    }
+    return column_name in existing_columns

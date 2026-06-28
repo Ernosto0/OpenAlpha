@@ -15,42 +15,35 @@ Backend packaging is defined in `pyproject.toml`. The frontend lives in `fronten
 From the repository root:
 
 ```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-dev.txt
-pip install -e .
+py -m openalpha setup .
 ```
 
 Notes:
 
-- `pip install -e .` installs the `openalpha` CLI entrypoint.
-- `requirements-dev.txt` adds test and lint dependencies used by the backend workflow.
+- `py -m openalpha setup .` creates `.venv` if needed, installs the local package there, and runs `npm install` in `frontend/`.
+- Contributors who also want test and lint dependencies can run `py -m openalpha setup . --dev`.
+- PowerShell activation is optional. If you want it, run `.\.venv\Scripts\Activate.ps1` after setup.
 
-## Frontend Setup
-
-From the repository root:
-
-```powershell
-cd frontend
-npm.cmd install
-cd ..
-```
+If `openalpha` is already installed in the active environment, you can also use `openalpha setup .`.
 
 ## Run Both Services With The CLI
 
 The main combined entrypoint is:
 
 ```powershell
-openalpha run .
+py -m openalpha run .
 ```
 
 What it does:
 
 - validates the repo structure
+- reuses the project `.venv` automatically when available
 - prepares `DATABASE_URL` if needed
 - initializes SQLite
 - starts FastAPI with Uvicorn from the repo root
 - starts the Vite frontend from `frontend/`
+
+If you activated `.venv` first, `openalpha run .` is equivalent.
 
 Default ports:
 
@@ -107,7 +100,7 @@ Re-activate your virtualenv and reinstall the package:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+py -m openalpha setup .
 ```
 
 ### `npm` Not Found
@@ -115,8 +108,7 @@ pip install -e .
 Install Node.js, then rerun:
 
 ```powershell
-cd frontend
-npm.cmd install
+py -m openalpha setup .
 ```
 
 ### The Virtualenv Points At A Removed Python Install
@@ -132,10 +124,7 @@ Fix by recreating the environment:
 
 ```powershell
 Remove-Item -Recurse -Force .venv
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-dev.txt
-pip install -e .
+py -m openalpha setup .
 ```
 
 If you do not want to delete immediately, inspect `.\.venv\pyvenv.cfg` first to confirm it references an old Python installation.

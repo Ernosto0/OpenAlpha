@@ -7,18 +7,7 @@ OpenAlpha is currently a local-first MVP. Contributions should describe the code
 Backend:
 
 ```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-dev.txt
-pip install -e .
-```
-
-Frontend:
-
-```powershell
-cd frontend
-npm.cmd install
-cd ..
+py -m openalpha setup . --dev
 ```
 
 Run everything:
